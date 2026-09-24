@@ -1,10 +1,35 @@
+# Every service reads secrets through `env_file`. The previous
+# `./.env:/app/.env` bind mount silently created a *directory* at that path
+# when .env was absent, which then failed in a way that pointed nowhere near
+# the cause; env_file fails loudly instead.
+x-env: &env-file
+  env_file:
+    - .env
+
+x-cli: &cli-service
+  build: .
+  image: ai-hedge-fund
+  depends_on:
+    - ollama
+  environment:
+    - PYTHONUNBUFFERED=1
+    - OLLAMA_BASE_URL=http://ollama:11434
+    - PYTHONPATH=/app
+    # No display in a container; write chart files instead of blocking.
+    - MPLBACKEND=Agg
+  # questionary prompts run inside the container CMD, so a TTY is required
+  # for any command that does not pass --analysts/--analysts-all.
+  tty: true
+  stdin_open: true
+
 services:
   ollama:
     image: ollama/ollama:latest
     container_name: ollama
     environment:
       - OLLAMA_HOST=0.0.0.0
-      # Apple Silicon GPU acceleration
+      # Apple Silicon GPU acceleration. Harmless elsewhere; see
+      # docker-compose.nvidia.yml for the NVIDIA override.
       - METAL_DEVICE=on
       - METAL_DEVICE_INDEX=0
     volumes:
@@ -14,79 +39,59 @@ services:
     restart: unless-stopped
 
   hedge-fund:
-    build: .
-    image: ai-hedge-fund
-    depends_on:
-      - ollama
-    volumes:
-      - ./.env:/app/.env
-    command: python src/main.py --ticker AAPL,MSFT,NVDA
-    environment:
-      - PYTHONUNBUFFERED=1
-      - OLLAMA_BASE_URL=http://ollama:11434
-      - PYTHONPATH=/app
-    tty: true
-    stdin_open: true
+    <<: [*cli-service, *env-file]
+    command: python src/main.py --ticker AAPL,MSFT,NVDA --analysts-all
 
   hedge-fund-reasoning:
-    build: .
-    image: ai-hedge-fund
-    depends_on:
-      - ollama
-    volumes:
-      - ./.env:/app/.env
-    command: python src/main.py --ticker AAPL,MSFT,NVDA --show-reasoning
-    environment:
-      - PYTHONUNBUFFERED=1
-      - OLLAMA_BASE_URL=http://ollama:11434
-      - PYTHONPATH=/app
-    tty: true
-    stdin_open: true
+    <<: [*cli-service, *env-file]
+    command: python src/main.py --ticker AAPL,MSFT,NVDA --analysts-all --show-reasoning
 
   hedge-fund-ollama:
-    build: .
-    image: ai-hedge-fund
-    depends_on:
-      - ollama
-    volumes:
-      - ./.env:/app/.env
-    command: python src/main.py --ticker AAPL,MSFT,NVDA --ollama
-    environment:
-      - PYTHONUNBUFFERED=1
-      - OLLAMA_BASE_URL=http://ollama:11434
-      - PYTHONPATH=/app
-    tty: true
-    stdin_open: true
+    <<: [*cli-service, *env-file]
+    command: python src/main.py --ticker AAPL,MSFT,NVDA --analysts-all --ollama
 
   backtester:
-    build: .
-    image: ai-hedge-fund
-    depends_on:
-      - ollama
-    volumes:
-      - ./.env:/app/.env
-    command: python src/backtester.py --ticker AAPL,MSFT,NVDA
-    environment:
-      - PYTHONUNBUFFERED=1
-      - OLLAMA_BASE_URL=http://ollama:11434
-      - PYTHONPATH=/app
-    tty: true
-    stdin_open: true
+    <<: [*cli-service, *env-file]
+    command: python src/backtester.py --ticker AAPL,MSFT,NVDA --analysts-all
 
   backtester-ollama:
+    <<: [*cli-service, *env-file]
+    command: python src/backtester.py --ticker AAPL,MSFT,NVDA --analysts-all --ollama
+
+  # ---- Web application ----------------------------------------------------
+  # app/README.md described "a complete system", but compose had no service
+  # that ran either half of it.
+
+  backend:
     build: .
     image: ai-hedge-fund
+    <<: *env-file
     depends_on:
       - ollama
-    volumes:
-      - ./.env:/app/.env
-    command: python src/backtester.py --ticker AAPL,MSFT,NVDA --ollama
+    command: uvicorn app.backend.main:app --host 0.0.0.0 --port 8000
     environment:
       - PYTHONUNBUFFERED=1
-      - OLLAMA_BASE_URL=http://ollama:11434
       - PYTHONPATH=/app
-    tty: true
-    stdin_open: true
+      - MPLBACKEND=Agg
+      - OLLAMA_BASE_URL=http://ollama:11434
+      # The browser reaches the canvas on the host, not inside the network.
+      - AI_HEDGE_FUND_CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./app/frontend
+    image: ai-hedge-fund-frontend
+    depends_on:
+      - backend
+    environment:
+      # Resolved by the browser, so it must be the host-published port.
+      - VITE_API_URL=http://localhost:8000
+    ports:
+      - "5173:5173"
+    restart: unless-stopped
 
 volumes:
-  ollama_data: 
+  ollama_data:

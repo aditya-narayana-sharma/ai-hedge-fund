@@ -1,0 +1,23 @@
+# NVIDIA GPU override for the Ollama container.
+#
+# run.sh has passed `-f docker-compose.yml -f docker-compose.nvidia.yml`
+# whenever `nvidia-smi` is on PATH since it was written, but the file was never
+# committed, so every compose command on an NVIDIA host failed on a missing
+# file. Requires the NVIDIA Container Toolkit on the host.
+#
+#   ./run.sh compose                     # picks this up automatically
+#   docker compose -f docker-compose.yml -f docker-compose.nvidia.yml up
+
+services:
+  ollama:
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

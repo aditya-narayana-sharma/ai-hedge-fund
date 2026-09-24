@@ -22,6 +22,7 @@ show_help() {
   echo "  backtest            Run the backtester"
   echo "  build               Build the Docker image"
   echo "  compose             Run using Docker Compose with integrated Ollama"
+  echo "  web                 Run the backend API and the canvas (http://localhost:5173)"
   echo "  ollama              Start only the Ollama container for model management"
   echo "  pull MODEL          Pull a specific model into the Ollama container"
   echo "  help                Show this help message"
@@ -89,7 +90,7 @@ while [[ $# -gt 0 ]]; do
       ANALYSTS="--analysts-all"
       shift
       ;;
-    main|backtest|build|help|compose|ollama)
+    main|backtest|build|help|compose|ollama|web)
       COMMAND="$1"
       shift
       ;;
@@ -252,6 +253,16 @@ FINANCIAL_DATASETS_API_KEY=
 ENVEOF
   fi
   echo "Please edit .env and add your API keys (at least one LLM provider), then re-run."
+fi
+
+# Run only the web application (backend API + canvas)
+if [ "$COMMAND" = "web" ]; then
+  echo "Starting the backend API and the canvas..."
+  echo "  Canvas:  http://localhost:5173"
+  echo "  API:     http://localhost:8000"
+  echo "  Docs:    http://localhost:8000/docs"
+  $COMPOSE_CMD $GPU_CONFIG up --build backend frontend
+  exit 0
 fi
 
 # Set script path and parameters based on command
