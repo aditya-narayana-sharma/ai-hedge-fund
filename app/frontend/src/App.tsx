@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { Flow } from './components/flow';
-import { Layout } from './components/layout';
+import { Flow } from './components/Flow';
+import { Layout } from './components/Layout';
 
 
 export default function App() {
