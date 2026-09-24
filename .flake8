@@ -1,0 +1,25 @@
+[flake8]
+# Matches [tool.black] line-length in pyproject.toml.
+max-line-length = 200
+extend-ignore =
+    # Black owns whitespace before ':' in slices.
+    E203,
+    # Black owns line breaks around binary operators.
+    W503,
+    # Black owns line length, and it cannot split the long prompt literals
+    # the persona agents are built from. `black --check` is the real gate.
+    E501,
+    # `##### Section #####` banner comments are this repo's house style.
+    E266
+exclude =
+    .git,
+    __pycache__,
+    .venv,
+    .venv-dev,
+    venv,
+    dist,
+    build,
+    app/frontend
+# src/utils/charts.py must select the matplotlib backend before importing pyplot.
+per-file-ignores =
+    src/utils/charts.py:E402

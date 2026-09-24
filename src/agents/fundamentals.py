@@ -1,9 +1,10 @@
-from langchain_core.messages import HumanMessage
-from src.graph.state import AgentState, show_agent_reasoning
-from src.utils.progress import progress
 import json
 
+from langchain_core.messages import HumanMessage
+
+from src.graph.state import AgentState, show_agent_reasoning
 from src.tools.api import get_financial_metrics
+from src.utils.progress import progress
 
 
 ##### Fundamental Agent #####
@@ -54,7 +55,11 @@ def fundamentals_agent(state: AgentState):
         signals.append("bullish" if profitability_score >= 2 else "bearish" if profitability_score == 0 else "neutral")
         reasoning["profitability_signal"] = {
             "signal": signals[0],
-            "details": (f"ROE: {return_on_equity:.2%}" if return_on_equity else "ROE: N/A") + ", " + (f"Net Margin: {net_margin:.2%}" if net_margin else "Net Margin: N/A") + ", " + (f"Op Margin: {operating_margin:.2%}" if operating_margin else "Op Margin: N/A"),
+            "details": (f"ROE: {return_on_equity:.2%}" if return_on_equity else "ROE: N/A")
+            + ", "
+            + (f"Net Margin: {net_margin:.2%}" if net_margin else "Net Margin: N/A")
+            + ", "
+            + (f"Op Margin: {operating_margin:.2%}" if operating_margin else "Op Margin: N/A"),
         }
 
         progress.update_status("fundamentals_agent", ticker, "Analyzing growth")
@@ -73,7 +78,9 @@ def fundamentals_agent(state: AgentState):
         signals.append("bullish" if growth_score >= 2 else "bearish" if growth_score == 0 else "neutral")
         reasoning["growth_signal"] = {
             "signal": signals[1],
-            "details": (f"Revenue Growth: {revenue_growth:.2%}" if revenue_growth else "Revenue Growth: N/A") + ", " + (f"Earnings Growth: {earnings_growth:.2%}" if earnings_growth else "Earnings Growth: N/A"),
+            "details": (f"Revenue Growth: {revenue_growth:.2%}" if revenue_growth else "Revenue Growth: N/A")
+            + ", "
+            + (f"Earnings Growth: {earnings_growth:.2%}" if earnings_growth else "Earnings Growth: N/A"),
         }
 
         progress.update_status("fundamentals_agent", ticker, "Analyzing financial health")
@@ -154,7 +161,7 @@ def fundamentals_agent(state: AgentState):
     state["data"]["analyst_signals"]["fundamentals_agent"] = fundamental_analysis
 
     progress.update_status("fundamentals_agent", None, "Done")
-    
+
     return {
         "messages": [message],
         "data": data,

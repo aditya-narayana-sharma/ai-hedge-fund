@@ -1,20 +1,22 @@
+import json
+import statistics
+
+from langchain_core.messages import HumanMessage
+from langchain_core.prompts import ChatPromptTemplate
+from pydantic import BaseModel
+from typing_extensions import Literal
+
 from src.graph.state import AgentState, show_agent_reasoning
 from src.tools.api import (
-    get_financial_metrics,
-    get_market_cap,
-    search_line_items,
-    get_insider_trades,
     get_company_news,
+    get_financial_metrics,
+    get_insider_trades,
+    get_market_cap,
     get_prices,
+    search_line_items,
 )
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.messages import HumanMessage
-from pydantic import BaseModel
-import json
-from typing_extensions import Literal
-from src.utils.progress import progress
 from src.utils.llm import call_llm
-import statistics
+from src.utils.progress import progress
 
 
 class StanleyDruckenmillerSignal(BaseModel):
@@ -43,7 +45,8 @@ def stanley_druckenmiller_agent(state: AgentState):
 
     for ticker in tickers:
         progress.update_status("stanley_druckenmiller_agent", ticker, "Fetching financial metrics")
-        metrics = get_financial_metrics(ticker, end_date, period="annual", limit=5)
+        # Result unused here; the call warms the cache for get_market_cap below.
+        get_financial_metrics(ticker, end_date, period="annual", limit=5)
 
         progress.update_status("stanley_druckenmiller_agent", ticker, "Gathering financial line items")
         # Include relevant line items for Stan Druckenmiller's approach:
@@ -105,11 +108,7 @@ def stanley_druckenmiller_agent(state: AgentState):
         #   35% Growth/Momentum, 20% Risk/Reward, 20% Valuation,
         #   15% Sentiment, 10% Insider Activity = 100%
         total_score = (
-            growth_momentum_analysis["score"] * 0.35
-            + risk_reward_analysis["score"] * 0.20
-            + valuation_analysis["score"] * 0.20
-            + sentiment_analysis["score"] * 0.15
-            + insider_activity["score"] * 0.10
+            growth_momentum_analysis["score"] * 0.35 + risk_reward_analysis["score"] * 0.20 + valuation_analysis["score"] * 0.20 + sentiment_analysis["score"] * 0.15 + insider_activity["score"] * 0.10
         )
 
         max_possible_score = 10
@@ -158,7 +157,7 @@ def stanley_druckenmiller_agent(state: AgentState):
     state["data"]["analyst_signals"]["stanley_druckenmiller_agent"] = druck_analysis
 
     progress.update_status("stanley_druckenmiller_agent", None, "Done")
-    
+
     return {"messages": [message], "data": state["data"]}
 
 
@@ -533,22 +532,22 @@ def generate_druckenmiller_output(
     template = ChatPromptTemplate.from_messages(
         [
             (
-              "system",
-              """You are a Stanley Druckenmiller AI agent, making investment decisions using his principles:
-            
+                "system",
+                """You are a Stanley Druckenmiller AI agent, making investment decisions using his principles:
+
               1. Seek asymmetric risk-reward opportunities (large upside, limited downside).
               2. Emphasize growth, momentum, and market sentiment.
               3. Preserve capital by avoiding major drawdowns.
               4. Willing to pay higher valuations for true growth leaders.
               5. Be aggressive when conviction is high.
               6. Cut losses quickly if the thesis changes.
-                            
+
               Rules:
               - Reward companies showing strong revenue/earnings growth and positive stock momentum.
               - Evaluate sentiment and insider activity as supportive or contradictory signals.
               - Watch out for high leverage or extreme volatility that threatens capital.
               - Output a JSON object with signal, confidence, and a reasoning string.
-              
+
               When providing your reasoning, be thorough and specific by:
               1. Explaining the growth and momentum metrics that most influenced your decision
               2. Highlighting the risk-reward profile with specific numerical evidence
@@ -556,14 +555,14 @@ def generate_druckenmiller_output(
               4. Addressing both upside potential and downside risks
               5. Providing specific valuation context relative to growth prospects
               6. Using Stanley Druckenmiller's decisive, momentum-focused, and conviction-driven voice
-              
+
               For example, if bullish: "The company shows exceptional momentum with revenue accelerating from 22% to 35% YoY and the stock up 28% over the past three months. Risk-reward is highly asymmetric with 70% upside potential based on FCF multiple expansion and only 15% downside risk given the strong balance sheet with 3x cash-to-debt. Insider buying and positive market sentiment provide additional tailwinds..."
               For example, if bearish: "Despite recent stock momentum, revenue growth has decelerated from 30% to 12% YoY, and operating margins are contracting. The risk-reward proposition is unfavorable with limited 10% upside potential against 40% downside risk. The competitive landscape is intensifying, and insider selling suggests waning confidence. I'm seeing better opportunities elsewhere with more favorable setups..."
               """,
             ),
             (
-              "human",
-              """Based on the following analysis, create a Druckenmiller-style investment signal.
+                "human",
+                """Based on the following analysis, create a Druckenmiller-style investment signal.
 
               Analysis Data for {ticker}:
               {analysis_data}
@@ -582,11 +581,7 @@ def generate_druckenmiller_output(
     prompt = template.invoke({"analysis_data": json.dumps(analysis_data, indent=2), "ticker": ticker})
 
     def create_default_signal():
-        return StanleyDruckenmillerSignal(
-            signal="neutral",
-            confidence=0.0,
-            reasoning="Error in analysis, defaulting to neutral"
-        )
+        return StanleyDruckenmillerSignal(signal="neutral", confidence=0.0, reasoning="Error in analysis, defaulting to neutral")
 
     return call_llm(
         prompt=prompt,

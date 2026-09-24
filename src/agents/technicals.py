@@ -1,13 +1,11 @@
+import json
 import math
 
+import numpy as np
+import pandas as pd
 from langchain_core.messages import HumanMessage
 
 from src.graph.state import AgentState, show_agent_reasoning
-
-import json
-import pandas as pd
-import numpy as np
-
 from src.tools.api import get_prices, prices_to_df
 from src.utils.progress import progress
 

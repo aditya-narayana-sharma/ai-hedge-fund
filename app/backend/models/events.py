@@ -1,4 +1,5 @@
-from typing import Dict, Optional, Any, Literal
+from typing import Any, Dict, Literal, Optional
+
 from pydantic import BaseModel
 
 
@@ -19,6 +20,7 @@ class StartEvent(BaseEvent):
     type: Literal["start"] = "start"
     timestamp: Optional[str] = None
 
+
 class ProgressUpdateEvent(BaseEvent):
     """Event containing an agent's progress update"""
 
@@ -27,6 +29,7 @@ class ProgressUpdateEvent(BaseEvent):
     ticker: Optional[str] = None
     status: str
     timestamp: Optional[str] = None
+
 
 class ErrorEvent(BaseEvent):
     """Event indicating an error occurred"""
