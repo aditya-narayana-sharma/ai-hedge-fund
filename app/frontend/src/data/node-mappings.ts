@@ -1,16 +1,23 @@
 import { AppNode } from "@/nodes/types";
-import { agents } from "./agents";
+import { AgentItem } from "@/services/types";
+import { INPUT_NODE_ID, OUTPUT_NODE_ID } from "./node-ids";
 
-// Map of sidebar item names to node creation functions
 export interface NodeTypeDefinition {
   createNode: (position: { x: number, y: number }) => AppNode;
 }
 
-// Define node creation functions for each type
-const nodeTypeDefinitions: Record<string, NodeTypeDefinition> = {
+let nodeCounter = 0;
+
+/** Distinct id per placed node, so adding an agent twice does not collide. */
+function generateId(prefix: string): string {
+  nodeCounter += 1;
+  return `${prefix}-${nodeCounter}-${Date.now().toString(36)}`;
+}
+
+const staticNodeTypes: Record<string, NodeTypeDefinition> = {
   "Text Input": {
-    createNode: (position: { x: number, y: number }): AppNode => ({
-      id: `text-input-node`,
+    createNode: (position): AppNode => ({
+      id: INPUT_NODE_ID,
       type: "input-node",
       position,
       data: {
@@ -21,8 +28,8 @@ const nodeTypeDefinitions: Record<string, NodeTypeDefinition> = {
     }),
   },
   "Text Output": {
-    createNode: (position: { x: number, y: number }): AppNode => ({
-      id: `text-output-node`,
+    createNode: (position): AppNode => ({
+      id: OUTPUT_NODE_ID,
       type: "output-node",
       position,
       data: {
@@ -32,24 +39,31 @@ const nodeTypeDefinitions: Record<string, NodeTypeDefinition> = {
       },
     }),
   },
-  // Dynamic node creation for all agents
-  ...agents.reduce((acc, agent) => {
+};
+
+/**
+ * Build the sidebar-name to node-factory map for a fetched agent catalog.
+ *
+ * Agent nodes carry their catalog key in `data.agentKey`; the node id is
+ * unique so the same agent can appear more than once on the canvas.
+ */
+export function createNodeTypeDefinitions(agents: AgentItem[]): Record<string, NodeTypeDefinition> {
+  const agentNodeTypes = agents.reduce((acc, agent) => {
     acc[agent.display_name] = {
-      createNode: (position: { x: number, y: number }): AppNode => ({
-        id: agent.key,
+      createNode: (position): AppNode => ({
+        id: generateId(agent.key),
         type: "agent-node",
         position,
         data: {
           name: agent.display_name,
           description: agent.description || "",
           status: "Idle",
+          agentKey: agent.key,
         },
       }),
     };
     return acc;
-  }, {} as Record<string, NodeTypeDefinition>),
-};
+  }, {} as Record<string, NodeTypeDefinition>);
 
-export function getNodeTypeDefinition(componentName: string): NodeTypeDefinition | null {
-  return nodeTypeDefinitions[componentName] || null;
-} 
+  return { ...staticNodeTypes, ...agentNodeTypes };
+}

@@ -28,13 +28,20 @@ import {
 } from '@/components/ui/table';
 import { ArrowDown, ArrowUp, Minus } from 'lucide-react';
 
+import { RISK_MANAGER_KEY } from '@/data/node-ids';
+import { OutputNodeData } from '@/services/types';
+import { PortfolioExposure } from './portfolio-exposure';
+
 interface TextOutputDialogProps {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
-  outputNodeData: any;
+  outputNodeData: OutputNodeData | null;
 }
 
-type ActionType = 'long' | 'short' | 'hold';
+type BadgeVariant = React.ComponentProps<typeof Badge>['variant'];
+
+const BUY_ACTIONS = new Set(['buy', 'long', 'cover']);
+const SELL_ACTIONS = new Set(['sell', 'short']);
 
 export function TextOutputDialog({ 
   isOpen, 
@@ -43,38 +50,31 @@ export function TextOutputDialog({
 }: TextOutputDialogProps) {
   if (!outputNodeData) return null;
 
-  const getActionIcon = (action: ActionType) => {
-    switch (action) {
-      case 'long':
-        return <ArrowUp className="h-4 w-4 text-green-500" />;
-      case 'short':
-        return <ArrowDown className="h-4 w-4 text-red-500" />;
-      case 'hold':
-        return <Minus className="h-4 w-4 text-yellow-500" />;
-      default:
-        return null;
-    }
+  const getActionIcon = (action: string) => {
+    if (BUY_ACTIONS.has(action)) return <ArrowUp className="h-4 w-4 text-green-500" />;
+    if (SELL_ACTIONS.has(action)) return <ArrowDown className="h-4 w-4 text-red-500" />;
+    if (action === 'hold') return <Minus className="h-4 w-4 text-yellow-500" />;
+    return null;
   };
 
-  const getSignalBadge = (signal: string) => {
-    const variant = signal === 'bullish' ? 'success' : 
+  const getSignalBadge = (signal: string | undefined) => {
+    if (!signal) return null;
+    const variant: BadgeVariant = signal === 'bullish' ? 'success' :
                    signal === 'bearish' ? 'destructive' : 'outline';
     
     return (
-      <Badge variant={variant as any}>
+      <Badge variant={variant}>
         {signal}
       </Badge>
     );
   };
 
-  const getConfidenceBadge = (confidence: number) => {
-    let variant = 'outline';
-    if (confidence >= 50) variant = 'success';
-    else if (confidence >= 0) variant = 'warning';
-    else variant = 'outline';
+  const getConfidenceBadge = (confidence: number | undefined) => {
+    if (confidence === undefined || confidence === null) return null;
+    const variant: BadgeVariant = confidence >= 50 ? 'success' : confidence >= 0 ? 'warning' : 'outline';
     const rounded = Number(confidence.toFixed(1));
     return (
-      <Badge variant={variant as any}>
+      <Badge variant={variant}>
         {rounded}%
       </Badge>
     );
@@ -85,7 +85,7 @@ export function TextOutputDialog({
   
   // Extract unique agents from analyst signals, excluding risk_management_agent
   const agents = Object.keys(outputNodeData.analyst_signals || {})
-    .filter(agent => agent !== 'risk_management_agent');
+    .filter(agent => agent !== RISK_MANAGER_KEY);
 
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
@@ -119,14 +119,14 @@ export function TextOutputDialog({
                   <TableBody>
                     {tickers.map(ticker => {
                       const decision = outputNodeData.decisions[ticker];
-                      const currentPrice = outputNodeData.analyst_signals.risk_management_agent?.[ticker]?.current_price || 'N/A';
+                      const currentPrice = outputNodeData.analyst_signals[RISK_MANAGER_KEY]?.[ticker]?.current_price;
                       return (
                         <TableRow key={ticker}>
                           <TableCell className="font-medium">{ticker}</TableCell>
-                          <TableCell>${typeof currentPrice === 'number' ? currentPrice.toFixed(2) : currentPrice}</TableCell>
+                          <TableCell>{typeof currentPrice === 'number' ? `$${currentPrice.toFixed(2)}` : 'N/A'}</TableCell>
                           <TableCell>
                             <div className="flex items-center gap-2">
-                              {getActionIcon(decision.action as ActionType)}
+                              {getActionIcon(decision.action)}
                               <span className="capitalize">{decision.action}</span>
                             </div>
                           </TableCell>
@@ -146,6 +146,8 @@ export function TextOutputDialog({
             </Card>
           </section>
 
+          <PortfolioExposure riskSignals={outputNodeData.analyst_signals[RISK_MANAGER_KEY]} />
+
           {/* Analyst Signals Section */}
           <section>
             <h2 className="text-lg font-semibold mb-4">Analyst Signals</h2>
@@ -156,7 +158,7 @@ export function TextOutputDialog({
                     <div className="flex items-center gap-2">
                       {ticker}
                       <div className="flex items-center gap-1">
-                        {getActionIcon(outputNodeData.decisions[ticker].action as ActionType)}
+                        {getActionIcon(outputNodeData.decisions[ticker].action)}
                         <span className="text-sm font-normal text-muted-foreground">
                           {outputNodeData.decisions[ticker].action} {outputNodeData.decisions[ticker].quantity} shares
                         </span>

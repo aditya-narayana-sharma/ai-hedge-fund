@@ -21,6 +21,7 @@ module.exports = {
           'badgeVariants',
           'buttonVariants',
           'useSidebar',
+          'useCatalog',
           'useFlowContext',
           'useNodeContext',
         ],

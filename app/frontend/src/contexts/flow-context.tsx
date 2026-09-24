@@ -1,6 +1,8 @@
-import { getNodeTypeDefinition } from '@/data/node-mappings';
+import { createNodeTypeDefinitions } from '@/data/node-mappings';
 import { useReactFlow, XYPosition } from '@xyflow/react';
-import { createContext, ReactNode, useCallback, useContext } from 'react';
+import { createContext, ReactNode, useCallback, useContext, useMemo } from 'react';
+
+import { useCatalog } from './catalog-context';
 
 interface FlowContextType {
   addNodeFromComponent: (componentName: string) => void;
@@ -22,30 +24,30 @@ interface FlowProviderProps {
 
 export function FlowProvider({ children }: FlowProviderProps) {
   const reactFlowInstance = useReactFlow();
+  const { allAgents } = useCatalog();
+
+  const nodeTypeDefinitions = useMemo(() => createNodeTypeDefinitions(allAgents), [allAgents]);
 
   // Add a node to the flow from a component in the sidebar
   const addNodeFromComponent = useCallback((componentName: string) => {
-    const nodeTypeDefinition = getNodeTypeDefinition(componentName);
+    const nodeTypeDefinition = nodeTypeDefinitions[componentName];
     if (!nodeTypeDefinition) {
       console.warn(`No node type definition found for component: ${componentName}`);
       return;
     }
 
-    // Generate a unique ID for the new node
-    // const uniqueId = generateId();
-    
     // Calculate center viewport position
     let position: XYPosition = { x: 100, y: 100 }; // Default position
-    
+
     // Try to get the viewport center position
     try {
       const { zoom, x, y } = reactFlowInstance.getViewport();
-      
+
       // Calculate a position in the viewport
       // Get the window dimensions
       const windowWidth = window.innerWidth;
       const windowHeight = window.innerHeight;
-      
+
       position = {
         x: (windowWidth / 2 - x) / zoom,
         y: (windowHeight / 2 - y) / zoom,
@@ -53,17 +55,17 @@ export function FlowProvider({ children }: FlowProviderProps) {
     } catch (err) {
       console.warn('Could not get viewport', err);
     }
-    
+
     // Add some randomness to prevent perfect overlap if multiple nodes are added
     position.x += Math.random() * 100 - 50;
     position.y = 0;
-    
+
     // Create the new node
     const newNode = nodeTypeDefinition.createNode(position);
-    
+
     // Add the new node to the flow
     reactFlowInstance.setNodes((nodes) => [...nodes, newNode]);
-  }, [reactFlowInstance]);
+  }, [nodeTypeDefinitions, reactFlowInstance]);
 
   const value = {
     addNodeFromComponent,
@@ -74,4 +76,4 @@ export function FlowProvider({ children }: FlowProviderProps) {
       {children}
     </FlowContext.Provider>
   );
-} 
+}

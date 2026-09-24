@@ -1,16 +1,19 @@
 import { ModelSelector } from '@/components/ui/llm-selector';
-import { getConnectedEdges, useReactFlow, type NodeProps } from '@xyflow/react';
+import { useReactFlow, type NodeProps } from '@xyflow/react';
 import { Bot, Loader2, Play } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { useCatalog } from '@/contexts/catalog-context';
 import { useNodeContext } from '@/contexts/node-context';
-import { apiModels, defaultModel, ModelItem } from '@/data/models';
+import { isAlwaysOnAgent, OUTPUT_NODE_ID } from '@/data/node-ids';
+import { getNodesInCompletePaths } from '@/nodes/utils';
 import { api } from '@/services/api';
-import { type TextInputNode } from '../types';
+import { ModelItem } from '@/services/types';
+import { type AgentNode, type TextInputNode } from '../types';
 import { NodeShell } from './node-shell';
 
 export function TextInputNode({
@@ -20,17 +23,29 @@ export function TextInputNode({
   isConnectable,
 }: NodeProps<TextInputNode>) {
   const [tickers, setTickers] = useState('');
-  const [selectedModel, setSelectedModel] = useState<ModelItem | null>(defaultModel);
+  const [selectedModel, setSelectedModel] = useState<ModelItem | null>(null);
+  const [validationError, setValidationError] = useState<string | null>(null);
   const nodeContext = useNodeContext();
-  const { resetAllNodes, agentNodeData } = nodeContext;
+  const { resetAllNodes, agentNodeData, runError } = nodeContext;
+  const { models, isLoading: isCatalogLoading, error: catalogError } = useCatalog();
   const { getNodes, getEdges } = useReactFlow();
   const abortControllerRef = useRef<(() => void) | null>(null);
-  
+
+  // Default to GPT-4o when the catalog arrives, or the first model offered.
+  const defaultModel = useMemo(
+    () => models.find(model => model.model_name === 'gpt-4o') ?? models[0] ?? null,
+    [models]
+  );
+
+  useEffect(() => {
+    setSelectedModel(current => current ?? defaultModel);
+  }, [defaultModel]);
+
   // Check if any agent is in progress
   const isProcessing = Object.values(agentNodeData).some(
     agent => agent.status === 'IN_PROGRESS'
   );
-  
+
   // Clean up SSE connection on unmount
   useEffect(() => {
     return () => {
@@ -39,57 +54,70 @@ export function TextInputNode({
       }
     };
   }, []);
-  
+
   const handleTickersChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setTickers(e.target.value);
   };
 
   const handlePlay = () => {
-    // First, reset all nodes to IDLE
+    setValidationError(null);
+
+    const tickerList = tickers.split(',').map(t => t.trim()).filter(Boolean);
+    if (tickerList.length === 0) {
+      setValidationError('Enter at least one ticker.');
+      return;
+    }
+
+    // Only agents on a complete input -> ... -> output path take part, so a
+    // chained topology works and a dangling agent does not.
+    const nodes = getNodes();
+    const nodeIdsInPaths = getNodesInCompletePaths({
+      startNodeId: id,
+      endNodeId: OUTPUT_NODE_ID,
+      nodes,
+      edges: getEdges(),
+    });
+
+    const selectedAgents = Array.from(
+      new Set(
+        nodes
+          .filter((node): node is AgentNode => node.type === 'agent-node' && nodeIdsInPaths.has(node.id))
+          .map(node => node.data.agentKey)
+          // The backend appends these to every graph; sending them would be
+          // rejected as unknown analysts.
+          .filter(agentKey => !isAlwaysOnAgent(agentKey))
+      )
+    );
+
+    if (selectedAgents.length === 0) {
+      setValidationError('Connect at least one agent along a path from Input to Output.');
+      return;
+    }
+
+    if (!selectedModel) {
+      setValidationError('Select a model first.');
+      return;
+    }
+
+    // Reset all nodes to IDLE, then clean up any existing connection
     resetAllNodes();
-    
-    // Clean up any existing connection
     if (abortControllerRef.current) {
       abortControllerRef.current();
     }
-    
-    // Call the backend API with SSE
-    const tickerList = tickers.split(',').map(t => t.trim());
-    
-    // Get the nodes and edges
-    const nodes = getNodes();
-    const edges = getEdges();
-    const connectedEdges = getConnectedEdges(nodes, edges);
-    
-    // Get all nodes that are agents and are connected in the flow
-    const selectedAgents = new Set<string>();
-    
-    // First, collect all the target node IDs from connected edges
-    const connectedNodeIds = new Set<string>();
-    connectedEdges.forEach(edge => {
-      if (edge.source === id) {
-        connectedNodeIds.add(edge.target);
-      }
-    });
-    
-    // Then filter for nodes that are agents
-    nodes.forEach(node => {
-      if (node.type === 'agent-node' && connectedNodeIds.has(node.id)) {
-        selectedAgents.add(node.id);
-      }
-    });
-        
+
     abortControllerRef.current = api.runHedgeFund(
       {
         tickers: tickerList,
-        selected_agents: Array.from(selectedAgents),
-        model_name: selectedModel?.model_name || undefined,
-        model_provider: selectedModel?.provider as any || undefined,
+        selected_agents: selectedAgents,
+        model_name: selectedModel.model_name,
+        model_provider: selectedModel.provider,
       },
       // Pass the node status context to the API
       nodeContext
     );
   };
+
+  const errorMessage = validationError ?? runError ?? catalogError;
 
   return (
     <TooltipProvider>
@@ -127,7 +155,7 @@ export function TextInputNode({
                     variant="secondary"
                     className="flex-shrink-0 transition-all duration-200 hover:bg-primary hover:text-primary-foreground active:scale-95"
                     onClick={handlePlay}
-                    disabled={isProcessing || !tickers.trim()}
+                    disabled={isProcessing || isCatalogLoading || !tickers.trim()}
                   >
                     {isProcessing ? (
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -142,12 +170,18 @@ export function TextInputNode({
                   Model
                 </div>
                 <ModelSelector
-                  models={apiModels}
+                  models={models}
                   value={selectedModel?.model_name || ""}
                   onChange={setSelectedModel}
-                  placeholder="Select a model..."
+                  placeholder={isCatalogLoading ? "Loading models..." : "Select a model..."}
                 />
               </div>
+
+              {errorMessage && (
+                <div className="text-subtitle text-red-400 break-words" role="alert">
+                  {errorMessage}
+                </div>
+              )}
             </div>
           </div>
         </CardContent>

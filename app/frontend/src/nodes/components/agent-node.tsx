@@ -4,6 +4,7 @@ import { useState } from 'react';
 
 import { CardContent } from '@/components/ui/card';
 import { useNodeContext } from '@/contexts/node-context';
+import { progressKey } from '@/data/node-ids';
 import { cn } from '@/lib/utils';
 import { NodeMessage, type AgentNode } from '../types';
 import { getStatusColor } from '../utils';
@@ -17,10 +18,12 @@ export function AgentNode({
   isConnectable,
 }: NodeProps<AgentNode>) {
   const { agentNodeData } = useNodeContext();
-  const nodeData = agentNodeData[id] || { 
-    status: 'IDLE', 
-    ticker: null, 
-    message: '', 
+  // Status is keyed by the agent the backend reports on, not by node id, so
+  // two instances of the same agent both light up.
+  const nodeData = agentNodeData[progressKey(data.agentKey)] || {
+    status: 'IDLE',
+    ticker: null,
+    message: '',
     messages: [],
     lastUpdated: 0
   };

@@ -3,9 +3,12 @@ import {
   ArrowUpFromLine,
   Bot,
   LucideIcon,
-  Type
+  Shield,
+  Type,
+  Wallet
 } from 'lucide-react';
-import { agents } from './agents';
+import { AgentItem } from '@/services/types';
+import { PORTFOLIO_MANAGER_KEY, RISK_MANAGER_KEY } from './node-ids';
 
 // Define component items by group
 export interface ComponentItem {
@@ -20,27 +23,31 @@ export interface ComponentGroup {
   items: ComponentItem[];
 }
 
-// Define all component groups and items
-export const componentGroups: ComponentGroup[] = [
-  {
-    name: "agents",
-    icon: Bot,
-    iconColor: "text-red-400",
-    items: agents.map(agent => ({
-      name: agent.display_name,
-      icon: Bot
-    }))
-  },
-  {
-    name: "inputs",
-    icon: ArrowDownToLine,
-    iconColor: "text-blue-400",
-    items: [
-      // { name: "Chat Input", icon: MessageSquare },
-      { name: "Text Input", icon: Type },
-      // { name: "File Input", icon: FileText }
-    ]
-  },
+const ALWAYS_ON_ICONS: Record<string, LucideIcon> = {
+  [RISK_MANAGER_KEY]: Shield,
+  [PORTFOLIO_MANAGER_KEY]: Wallet,
+};
+
+/** Build the sidebar from a fetched agent catalog. */
+export function getComponentGroups(agents: AgentItem[]): ComponentGroup[] {
+  return [
+    {
+      name: "agents",
+      icon: Bot,
+      iconColor: "text-red-400",
+      items: agents.map(agent => ({
+        name: agent.display_name,
+        icon: ALWAYS_ON_ICONS[agent.key] ?? Bot
+      }))
+    },
+    {
+      name: "inputs",
+      icon: ArrowDownToLine,
+      iconColor: "text-blue-400",
+      items: [
+        { name: "Text Input", icon: Type },
+      ]
+    },
     {
       name: "outputs",
       icon: ArrowUpFromLine,
@@ -49,22 +56,5 @@ export const componentGroups: ComponentGroup[] = [
         { name: "Text Output", icon: Type },
       ]
     },
-  // {
-  //   name: "data",
-  //   icon: Database,
-  //   iconColor: "text-yellow-400",
-  //   items: [
-  //     { name: "Data Store", icon: Database },
-  //     { name: "Vector Store", icon: LinkIcon }
-  //   ]
-  // },
-  // {
-  //   name: "processing",
-  //   icon: Zap,
-  //   iconColor: "text-purple-400",
-  //   items: [
-  //     { name: "Code Processor", icon: Code },
-  //     { name: "Function", icon: Zap }
-  //   ]
-  // },
-]; 
+  ];
+}

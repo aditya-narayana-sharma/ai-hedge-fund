@@ -1,12 +1,13 @@
 import { Accordion } from '@/components/ui/accordion';
 import { Button } from '@/components/ui/button';
+import { useCatalog } from '@/contexts/catalog-context';
 import { useFlowContext } from '@/contexts/flow-context';
-import { componentGroups } from '@/data/sidebar-components';
+import { getComponentGroups } from '@/data/sidebar-components';
 import { useComponentGroups } from '@/hooks/use-component-groups';
 import { useResizable } from '@/hooks/use-resizable';
 import { cn } from '@/lib/utils';
 import { PanelLeft } from 'lucide-react';
-import { ReactNode } from 'react';
+import { ReactNode, useMemo } from 'react';
 import { ComponentGroupItem } from './component-group';
 import { SearchBox } from './search-box';
 
@@ -24,6 +25,8 @@ export function LeftSidebar({
 }: LeftSidebarProps) {
   // Use our custom hooks
   const { width, isDragging, elementRef, startResize } = useResizable();
+  const { allAgents, isLoading, error } = useCatalog();
+  const componentGroups = useMemo(() => getComponentGroups(allAgents), [allAgents]);
   const { 
     searchQuery, 
     setSearchQuery, 
@@ -90,7 +93,19 @@ export function LeftSidebar({
           ))}
         </Accordion>
 
-        {filteredGroups.length === 0 && (
+        {error && (
+          <div className="px-4 py-3 text-red-400 text-sm" role="alert">
+            Could not load the agent catalog: {error}
+          </div>
+        )}
+
+        {isLoading && !error && (
+          <div className="text-center py-8 text-gray-400 text-sm">
+            Loading components...
+          </div>
+        )}
+
+        {!isLoading && !error && filteredGroups.length === 0 && (
           <div className="text-center py-8 text-gray-400 text-sm">
             No components match your search
           </div>

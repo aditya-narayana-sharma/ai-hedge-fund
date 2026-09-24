@@ -1,5 +1,7 @@
 import { createContext, ReactNode, useCallback, useContext, useState } from 'react';
 
+import { OutputNodeData } from '@/services/types';
+
 export type NodeStatus = 'IDLE' | 'IN_PROGRESS' | 'COMPLETE' | 'ERROR';
 
 // Message history item
@@ -19,11 +21,7 @@ export interface AgentNodeData {
   timestamp?: string;
 }
 
-// Data structure for the output node data (from complete event)
-export interface OutputNodeData {
-  decisions: Record<string, any>;
-  analyst_signals: Record<string, any>;
-}
+export type { OutputNodeData };
 
 // Default agent node state
 const DEFAULT_AGENT_NODE_STATE: AgentNodeData = {
@@ -37,9 +35,12 @@ const DEFAULT_AGENT_NODE_STATE: AgentNodeData = {
 interface NodeContextType {
   agentNodeData: Record<string, AgentNodeData>;
   outputNodeData: OutputNodeData | null;
+  /** Message from the last failed run, so the canvas can say what went wrong. */
+  runError: string | null;
   updateAgentNode: (nodeId: string, data: Partial<AgentNodeData> | NodeStatus) => void;
   updateAgentNodes: (nodeIds: string[], status: NodeStatus) => void;
   setOutputNodeData: (data: OutputNodeData) => void;
+  setRunError: (message: string | null) => void;
   resetAllNodes: () => void;
 }
 
@@ -48,6 +49,7 @@ const NodeContext = createContext<NodeContextType | undefined>(undefined);
 export function NodeProvider({ children }: { children: ReactNode }) {
   const [agentNodeData, setAgentNodeData] = useState<Record<string, AgentNodeData>>({});
   const [outputNodeData, setOutputNodeData] = useState<OutputNodeData | null>(null);
+  const [runError, setRunError] = useState<string | null>(null);
 
   const updateAgentNode = useCallback((nodeId: string, data: Partial<AgentNodeData> | NodeStatus) => {
     // Handle string status shorthand (just passing a status string)
@@ -70,7 +72,7 @@ export function NodeProvider({ children }: { children: ReactNode }) {
     setAgentNodeData(prev => {
       const existingNode = prev[nodeId] || { ...DEFAULT_AGENT_NODE_STATE };
       const newMessages = [...existingNode.messages];
-      
+
       // Add message to history if it's new
       if (data.message && data.message !== existingNode.message) {
         newMessages.push({
@@ -79,7 +81,7 @@ export function NodeProvider({ children }: { children: ReactNode }) {
           ticker: data.ticker || existingNode.ticker
         });
       }
-      
+
       return {
         ...prev,
         [nodeId]: {
@@ -94,10 +96,10 @@ export function NodeProvider({ children }: { children: ReactNode }) {
 
   const updateAgentNodes = useCallback((nodeIds: string[], status: NodeStatus) => {
     if (nodeIds.length === 0) return;
-    
+
     setAgentNodeData(prev => {
       const newStates = { ...prev };
-      
+
       nodeIds.forEach(id => {
         newStates[id] = {
           ...(newStates[id] || { ...DEFAULT_AGENT_NODE_STATE }),
@@ -105,7 +107,7 @@ export function NodeProvider({ children }: { children: ReactNode }) {
           lastUpdated: Date.now()
         };
       });
-      
+
       return newStates;
     });
   }, []);
@@ -113,6 +115,7 @@ export function NodeProvider({ children }: { children: ReactNode }) {
   const resetAllNodes = useCallback(() => {
     setAgentNodeData({});
     setOutputNodeData(null);
+    setRunError(null);
   }, []);
 
   return (
@@ -120,9 +123,11 @@ export function NodeProvider({ children }: { children: ReactNode }) {
       value={{
         agentNodeData,
         outputNodeData,
+        runError,
         updateAgentNode,
         updateAgentNodes,
         setOutputNodeData,
+        setRunError,
         resetAllNodes,
       }}
     >
@@ -133,10 +138,10 @@ export function NodeProvider({ children }: { children: ReactNode }) {
 
 export function useNodeContext() {
   const context = useContext(NodeContext);
-  
+
   if (context === undefined) {
     throw new Error('useNodeContext must be used within a NodeProvider');
   }
-  
+
   return context;
-} 
+}
