@@ -9,6 +9,8 @@ set END_DATE=
 set INITIAL_AMOUNT=100000.0
 set MARGIN_REQUIREMENT=0.0
 set SHOW_REASONING=
+set ANALYSTS=
+set MODEL_ARGS=
 set COMMAND=
 set MODEL_NAME=
 
@@ -26,6 +28,10 @@ echo   --initial-cash AMT  Initial cash position (default: 100000.0)
 echo   --margin-requirement RATIO  Margin requirement ratio (default: 0.0)
 echo   --ollama            Use Ollama for local LLM inference
 echo   --show-reasoning    Show reasoning from each agent
+echo   --analysts KEYS     Comma-separated analyst keys (e.g., warren_buffett,michael_burry)
+echo   --analysts-all      Use every available analyst, skipping the prompt
+echo   --model-name NAME   Model to use, e.g. gpt-4o. Skips the model prompt
+echo   --model-provider P  Provider for --model-name, e.g. OpenAI
 echo.
 echo Commands:
 echo   main                Run the main hedge fund application
@@ -86,6 +92,29 @@ if "%~1"=="--ollama" (
 )
 if "%~1"=="--show-reasoning" (
     set SHOW_REASONING=--show-reasoning
+    shift
+    goto :parse_args
+)
+if "%~1"=="--analysts" (
+    set ANALYSTS=--analysts %~2
+    shift
+    shift
+    goto :parse_args
+)
+if "%~1"=="--analysts-all" (
+    set ANALYSTS=--analysts-all
+    shift
+    goto :parse_args
+)
+if "%~1"=="--model-name" (
+    set MODEL_ARGS=!MODEL_ARGS! --model-name %~2
+    shift
+    shift
+    goto :parse_args
+)
+if "%~1"=="--model-provider" (
+    set MODEL_ARGS=!MODEL_ARGS! --model-provider %~2
+    shift
     shift
     goto :parse_args
 )
@@ -246,15 +275,23 @@ if "!COMMAND!"=="compose" (
     exit /b 0
 )
 
-:: Check if .env file exists, if not create from .env.example
+:: Make sure a .env exists. Seed it from the template when one is available,
+:: but do not make the entry point depend on the template being present:
+:: name the keys instead, so a missing template is not a hard stop.
 if not exist .env (
     if exist .env.example (
         echo No .env file found. Creating from .env.example...
         copy .env.example .env
-        echo Please edit .env file to add your API keys.
+        echo Please edit .env to add your API keys.
     ) else (
-        echo Error: No .env or .env.example file found.
-        exit /b 1
+        echo No .env file found. Creating an empty one.
+        type nul > .env
+        echo Add at least one LLM provider key to .env before running:
+        echo   OPENAI_API_KEY, ANTHROPIC_API_KEY, GROQ_API_KEY, DEEPSEEK_API_KEY or GOOGLE_API_KEY
+        echo Optional:
+        echo   FINANCIAL_DATASETS_API_KEY  ^(AAPL, GOOGL, MSFT, NVDA and TSLA are free without it^)
+        echo   OPENAI_API_BASE             ^(OpenAI-compatible gateway^)
+        echo   OLLAMA_BASE_URL             ^(defaults to http://ollama:11434 under compose^)
     )
 )
 
@@ -319,6 +356,10 @@ if not "!USE_OLLAMA!"=="" (
     if not "!MARGIN_REQUIREMENT!"=="" (
         set COMMAND_OVERRIDE=!COMMAND_OVERRIDE! --margin-requirement !MARGIN_REQUIREMENT!
     )
+
+    if not "!ANALYSTS!"=="" (
+        set COMMAND_OVERRIDE=!COMMAND_OVERRIDE! !ANALYSTS!
+    )
     
     :: Run the command with Docker Compose
     echo Running AI Hedge Fund with Ollama using Docker Compose...
@@ -339,10 +380,10 @@ if not "!USE_OLLAMA!"=="" (
 
 :: Standard Docker run (without Ollama)
 :: Build the command
-set CMD=docker run -it --rm -v %cd%\.env:/app/.env
+set CMD=docker run -it --rm --env-file %cd%\.env
 
 :: Add the command
-set CMD=!CMD! ai-hedge-fund python !SCRIPT_PATH! --ticker !TICKER! !START_DATE! !END_DATE! !INITIAL_PARAM! --margin-requirement !MARGIN_REQUIREMENT! !SHOW_REASONING!
+set CMD=!CMD! ai-hedge-fund python !SCRIPT_PATH! --ticker !TICKER! !START_DATE! !END_DATE! !INITIAL_PARAM! --margin-requirement !MARGIN_REQUIREMENT! !SHOW_REASONING! !ANALYSTS! !MODEL_ARGS!
 
 :: Run the command
 echo Running: !CMD!

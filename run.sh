@@ -14,6 +14,10 @@ show_help() {
   echo "  --margin-requirement RATIO  Margin requirement ratio (default: 0.0)"
   echo "  --ollama            Use Ollama for local LLM inference"
   echo "  --show-reasoning    Show reasoning from each agent"
+  echo "  --analysts KEYS     Comma-separated analyst keys (e.g., warren_buffett,michael_burry)"
+  echo "  --analysts-all      Use every available analyst, skipping the prompt"
+  echo "  --model-name NAME   Model to use, e.g. gpt-4o. Skips the model prompt"
+  echo "  --model-provider P  Provider for --model-name, e.g. OpenAI"
   echo ""
   echo "Commands:"
   echo "  main                Run the main hedge fund application"
@@ -42,6 +46,8 @@ END_DATE=""
 INITIAL_AMOUNT="100000.0"
 MARGIN_REQUIREMENT="0.0"
 SHOW_REASONING=""
+ANALYSTS=""
+MODEL_ARGS=""
 COMMAND=""
 MODEL_NAME=""
 
@@ -75,6 +81,22 @@ while [[ $# -gt 0 ]]; do
     --show-reasoning)
       SHOW_REASONING="--show-reasoning"
       shift
+      ;;
+    --analysts)
+      ANALYSTS="--analysts $2"
+      shift 2
+      ;;
+    --analysts-all)
+      ANALYSTS="--analysts-all"
+      shift
+      ;;
+    --model-name)
+      MODEL_ARGS="$MODEL_ARGS --model-name $2"
+      shift 2
+      ;;
+    --model-provider)
+      MODEL_ARGS="$MODEL_ARGS --model-provider $2"
+      shift 2
       ;;
     main|backtest|build|help|compose|ollama)
       COMMAND="$1"
@@ -133,8 +155,12 @@ if [ "$OS" = "Darwin" ] && { [ "$ARCH" = "arm64" ] || [ "$ARCH" = "aarch64" ]; }
   echo "Detected Apple Silicon (M-series) - Metal GPU acceleration should be enabled"
   # Metal GPU is handled via environment variables in docker-compose.yml
 elif command -v nvidia-smi &> /dev/null; then
-  echo "NVIDIA GPU detected - Adding NVIDIA GPU configuration"
-  GPU_CONFIG="-f docker-compose.yml -f docker-compose.nvidia.yml"
+  if [ -f docker-compose.nvidia.yml ]; then
+    echo "NVIDIA GPU detected - Adding NVIDIA GPU configuration"
+    GPU_CONFIG="-f docker-compose.yml -f docker-compose.nvidia.yml"
+  else
+    echo "NVIDIA GPU detected but docker-compose.nvidia.yml is missing - continuing without GPU configuration"
+  fi
 fi
 
 # Build the Docker image if 'build' command is provided
@@ -218,15 +244,25 @@ if [ "$COMMAND" = "compose" ]; then
   exit 0
 fi
 
-# Check if .env file exists, if not create from .env.example
+# Make sure a .env exists. Seed it from the template when one is available,
+# but do not make the entry point depend on the template being present:
+# name the keys instead, so a missing template is not a hard stop.
 if [ ! -f .env ]; then
   if [ -f .env.example ]; then
     echo "No .env file found. Creating from .env.example..."
     cp .env.example .env
-    echo "Please edit .env file to add your API keys."
+    echo "Please edit .env to add your API keys."
   else
-    echo "Error: No .env or .env.example file found."
-    exit 1
+    echo "No .env file found. Creating an empty one."
+    touch .env
+    cat <<'EOF'
+Add at least one LLM provider key to .env before running:
+  OPENAI_API_KEY, ANTHROPIC_API_KEY, GROQ_API_KEY, DEEPSEEK_API_KEY or GOOGLE_API_KEY
+Optional:
+  FINANCIAL_DATASETS_API_KEY  (AAPL, GOOGL, MSFT, NVDA and TSLA are free without it)
+  OPENAI_API_BASE             (OpenAI-compatible gateway)
+  OLLAMA_BASE_URL             (defaults to http://ollama:11434 under compose)
+EOF
   fi
 fi
 
@@ -288,6 +324,10 @@ if [ -n "$USE_OLLAMA" ]; then
   if [ -n "$MARGIN_REQUIREMENT" ]; then
     COMMAND_OVERRIDE="$COMMAND_OVERRIDE --margin-requirement $MARGIN_REQUIREMENT"
   fi
+
+  if [ -n "$ANALYSTS" ]; then
+    COMMAND_OVERRIDE="$COMMAND_OVERRIDE $ANALYSTS"
+  fi
   
   # Run the command with Docker Compose
   echo "Running AI Hedge Fund with Ollama using Docker Compose..."
@@ -308,10 +348,10 @@ fi
 
 # Standard Docker run (without Ollama)
 # Build the command
-CMD="docker run -it --rm -v $(pwd)/.env:/app/.env"
+CMD="docker run -it --rm --env-file $(pwd)/.env"
 
 # Add the command
-CMD="$CMD ai-hedge-fund python $SCRIPT_PATH --ticker $TICKER $START_DATE $END_DATE $INITIAL_PARAM --margin-requirement $MARGIN_REQUIREMENT $SHOW_REASONING"
+CMD="$CMD ai-hedge-fund python $SCRIPT_PATH --ticker $TICKER $START_DATE $END_DATE $INITIAL_PARAM --margin-requirement $MARGIN_REQUIREMENT $SHOW_REASONING $ANALYSTS $MODEL_ARGS"
 
 # Run the command
 echo "Running: $CMD"

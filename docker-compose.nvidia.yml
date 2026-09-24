@@ -1,0 +1,18 @@
+# NVIDIA GPU overlay, layered on top of docker-compose.yml by run.sh / run.bat
+# when nvidia-smi is present. Requires the NVIDIA Container Toolkit on the host.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.nvidia.yml up
+services:
+  ollama:
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+      # The Metal variables in the base file are inert off Apple Silicon.
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

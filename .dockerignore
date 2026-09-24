@@ -4,6 +4,7 @@
 
 # Poetry
 .venv
+venv/
 __pycache__/
 *.py[cod]
 *$py.class
@@ -17,6 +18,10 @@ __pycache__/
 .vscode/
 *.swp
 *.swo
+
+# Frontend build artifacts
+app/frontend/node_modules/
+app/frontend/dist/
 
 # Logs and data
 logs/
