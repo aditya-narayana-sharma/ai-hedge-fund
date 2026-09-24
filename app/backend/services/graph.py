@@ -91,7 +91,10 @@ def create_graph(
     return graph
 
 
-async def run_graph_async(graph, portfolio, tickers, start_date, end_date, model_name, model_provider, position_limit=DEFAULT_POSITION_LIMIT):
+DEFAULT_PROMPT = "Make trading decisions based on the provided data."
+
+
+async def run_graph_async(graph, portfolio, tickers, start_date, end_date, model_name, model_provider, position_limit=DEFAULT_POSITION_LIMIT, prompt=None):
     """Run the synchronous graph off the event loop, preserving the run context.
 
     ``asyncio.to_thread`` copies the active contextvars, which is what lets the
@@ -108,6 +111,7 @@ async def run_graph_async(graph, portfolio, tickers, start_date, end_date, model
         model_name,
         model_provider,
         position_limit,
+        prompt,
     )
 
 
@@ -120,6 +124,7 @@ def run_graph(
     model_name: str,
     model_provider: str,
     position_limit: float = DEFAULT_POSITION_LIMIT,
+    prompt: str | None = None,
 ) -> dict:
     """
     Run the graph with the given portfolio, tickers,
@@ -130,7 +135,7 @@ def run_graph(
         {
             "messages": [
                 HumanMessage(
-                    content="Make trading decisions based on the provided data.",
+                    content=prompt or DEFAULT_PROMPT,
                 )
             ],
             "data": {

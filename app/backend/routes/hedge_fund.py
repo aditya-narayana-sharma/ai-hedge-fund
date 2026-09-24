@@ -43,6 +43,7 @@ async def run_hedge_fund(request: HedgeFundRequest):
             model_name=request.model_name,
             model_provider=model_provider,
             position_limit=request.position_limit,
+            prompt=request.prompt,
         )
 
     def to_payload(result: dict) -> dict:

@@ -14,6 +14,8 @@ interface RunRequest {
   initial_cash?: number;
   margin_requirement?: number;
   position_limit?: number;
+  /** Replaces the default opening instruction sent to the agents. */
+  prompt?: string;
 }
 
 /** A cancelled fetch rejects with an AbortError; that is expected, not a failure. */

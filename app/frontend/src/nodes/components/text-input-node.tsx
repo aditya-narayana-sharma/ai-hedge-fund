@@ -1,6 +1,6 @@
 import { ModelSelector } from '@/components/ui/llm-selector';
 import { useReactFlow, type NodeProps } from '@xyflow/react';
-import { AlertTriangle, Bot, Loader2, Play } from 'lucide-react';
+import { AlertTriangle, Bot, FileText, Loader2, Play } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -27,6 +27,7 @@ export function TextInputNode({
   isConnectable,
 }: NodeProps<TextInputNode>) {
   const [tickers, setTickers] = useState('');
+  const [prompt, setPrompt] = useState('');
   const [mode, setMode] = useState<RunMode>('analysis');
   const [selectedModel, setSelectedModel] = useState<ModelItem | null>(null);
   const [backtestResult, setBacktestResult] = useState<BacktestResult | null>(null);
@@ -38,6 +39,7 @@ export function TextInputNode({
   const { models, defaultModel, isLoading: catalogLoading, error: catalogError } = useCatalog();
   const { getNodes, getEdges } = useReactFlow();
   const abortRef = useRef<(() => void) | null>(null);
+  const tickerFileRef = useRef<HTMLInputElement>(null);
 
   const isProcessing = Object.values(agentNodeData).some((agent) => agent.status === 'IN_PROGRESS');
 
@@ -55,6 +57,30 @@ export function TextInputNode({
 
   const handleTickersChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setTickers(e.target.value);
+  };
+
+  // Load a ticker list from a .txt or .csv file: symbols separated by commas,
+  // newlines or whitespace, with anything after a '#' treated as a comment.
+  const handleTickerFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+
+    const symbols = (await file.text())
+      .split('\n')
+      .map((line) => line.split('#')[0])
+      .join(',')
+      .split(/[\s,;]+/)
+      .map((symbol) => symbol.trim().toUpperCase())
+      .filter(Boolean);
+
+    if (symbols.length === 0) {
+      setLocalError(`${file.name} contained no ticker symbols.`);
+      return;
+    }
+
+    setLocalError(null);
+    setTickers([...new Set(symbols)].join(','));
   };
 
   const handlePlay = () => {
@@ -95,6 +121,7 @@ export function TextInputNode({
       selected_agents: agentKeys,
       model_name: selectedModel?.model_name || undefined,
       model_provider: selectedModel?.provider || undefined,
+      prompt: prompt.trim() || undefined,
     };
 
     abortRef.current =
@@ -146,6 +173,26 @@ export function TextInputNode({
                     value={tickers}
                     onChange={handleTickersChange}
                   />
+                  <Tooltip delayDuration={200}>
+                    <TooltipTrigger asChild>
+                      <Button
+                        size="icon"
+                        variant="secondary"
+                        className="flex-shrink-0"
+                        onClick={() => tickerFileRef.current?.click()}
+                      >
+                        <FileText className="h-3.5 w-3.5" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">Load tickers from a .txt or .csv file</TooltipContent>
+                  </Tooltip>
+                  <input
+                    ref={tickerFileRef}
+                    type="file"
+                    accept=".txt,.csv,text/plain,text/csv"
+                    className="hidden"
+                    onChange={handleTickerFile}
+                  />
                   <Button
                     size="icon"
                     variant="secondary"
@@ -160,6 +207,26 @@ export function TextInputNode({
                     )}
                   </Button>
                 </div>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <div className="text-subtitle text-muted-foreground flex items-center gap-1">
+                  <Tooltip delayDuration={200}>
+                    <TooltipTrigger asChild>
+                      <span>Instruction</span>
+                    </TooltipTrigger>
+                    <TooltipContent side="right">
+                      Replaces the default instruction sent to every agent. Leave blank to use it.
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+                <textarea
+                  className="min-h-[60px] w-full resize-y rounded-md border border-input bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  placeholder="Make trading decisions based on the provided data."
+                  value={prompt}
+                  maxLength={2000}
+                  onChange={(e) => setPrompt(e.target.value)}
+                />
               </div>
 
               <div className="flex flex-col gap-2">

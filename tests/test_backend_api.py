@@ -83,6 +83,25 @@ class TestRequestValidation:
         response = client.post("/hedge-fund/run", json={"tickers": [], "selected_agents": ["warren_buffett"]})
         assert response.status_code == 422
 
+    def test_a_custom_prompt_is_accepted(self, client):
+        """The opening instruction used to be hard-coded in run_graph."""
+        response = client.post(
+            "/hedge-fund/run",
+            json={
+                "tickers": ["NOPE"],
+                "selected_agents": ["warren_buffett"],
+                "prompt": "Prioritise downside protection over upside.",
+            },
+        )
+        assert response.status_code == 200
+
+    def test_an_overlong_prompt_is_rejected(self, client):
+        response = client.post(
+            "/hedge-fund/run",
+            json={"tickers": ["AAPL"], "selected_agents": ["warren_buffett"], "prompt": "x" * 2001},
+        )
+        assert response.status_code == 422
+
     def test_backtest_rejects_an_inverted_date_range(self, client):
         response = client.post(
             "/backtest",

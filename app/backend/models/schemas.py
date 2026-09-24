@@ -34,6 +34,10 @@ class RunRequestBase(BaseModel):
     initial_cash: float = Field(default=100000.0, gt=0)
     margin_requirement: float = Field(default=0.0, ge=0)
     position_limit: float = Field(default=DEFAULT_POSITION_LIMIT, gt=0, le=1)
+    # Replaces the hard-coded opening HumanMessage, so an operator can steer
+    # the run ("prioritise downside risk", "assume a 12-month horizon") without
+    # editing the graph.
+    prompt: Optional[str] = Field(default=None, max_length=2000)
 
     def get_start_date(self) -> str:
         """Calculate start date if not provided"""
