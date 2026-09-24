@@ -3,6 +3,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.backend.middleware import BearerTokenMiddleware, RateLimitMiddleware
 from app.backend.routes import api_router
 from src.utils.progress import progress
 
@@ -24,6 +25,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Off by default; see app/backend/middleware.py for the environment variables.
+app.add_middleware(RateLimitMiddleware)
+app.add_middleware(BearerTokenMiddleware)
 
 # Include all routes
 app.include_router(api_router)

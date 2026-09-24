@@ -196,12 +196,17 @@ added over `src/data` and the two utils modules the tree depends on; the
 annotation defects fixed; metadata corrected; duplicate lockfiles and a stray
 root `package.json` removed; `ARCHITECTURE.md` written; this directory created.
 
+Optional bearer-token auth and per-client rate limiting are added as
+middleware, both off by default. The realistic threat to a localhost desktop
+tool is a runaway client loop spending money at an LLM provider, not a hostile
+one, so the rate limit meters only the two endpoints that start runs and the
+health endpoints stay reachable without credentials.
+
 **Deferred, with reasons.**
 
 | Item | Why |
 |---|---|
 | Persistence layer (`sqlalchemy` + `alembic` are declared) | Nothing in the product yet needs durable state; adding schema and migrations before there is a reader would be speculative. The dependencies stay declared for the eventual run history. |
-| Auth and rate limiting | The API binds to localhost for a single-user desktop tool. Adding auth is a product decision about deployment shape, not a defect fix. |
 | `api/` package | `routes/` is the API layer. The README no longer implies a second one. |
 | Sidebar placeholders: Data Store, Vector Store, Code Processor, Function, Chat Input, File Input | The engine has no notion of any of them. Shipping nodes that cannot run would be worse than their absence. They remain commented out as intent markers. |
 | Per-run `Cache` | See F6. |
