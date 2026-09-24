@@ -14,7 +14,11 @@ from . import docker
 OLLAMA_SERVER_URL = "http://localhost:11434"
 OLLAMA_API_MODELS_ENDPOINT = f"{OLLAMA_SERVER_URL}/api/tags"
 OLLAMA_DOWNLOAD_URL = {"darwin": "https://ollama.com/download/darwin", "windows": "https://ollama.com/download/windows", "linux": "https://ollama.com/download/linux"}  # macOS  # Windows  # Linux
-INSTALLATION_INSTRUCTIONS = {"darwin": "curl -fsSL https://ollama.com/install.sh | sh", "windows": "# Download from https://ollama.com/download/windows and run the installer", "linux": "curl -fsSL https://ollama.com/install.sh | sh"}
+INSTALLATION_INSTRUCTIONS = {
+    "darwin": "curl -fsSL https://ollama.com/install.sh | sh",
+    "windows": "# Download from https://ollama.com/download/windows and run the installer",
+    "linux": "curl -fsSL https://ollama.com/install.sh | sh",
+}
 
 
 def is_ollama_installed() -> bool:
@@ -199,14 +203,14 @@ def download_model(model_name: str) -> bool:
         # Use the Ollama CLI to download the model
         process = subprocess.Popen(
             ["ollama", "pull", model_name],
-            stdout=subprocess.PIPE, 
+            stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,  # Redirect stderr to stdout to capture all output
             text=True,
             bufsize=1,  # Line buffered
-            encoding='utf-8',  # Explicitly use UTF-8 encoding
-            errors='replace'   # Replace any characters that cannot be decoded
+            encoding="utf-8",  # Explicitly use UTF-8 encoding
+            errors="replace",  # Replace any characters that cannot be decoded
         )
-        
+
         # Show some progress to the user
         print(f"{Fore.CYAN}Download progress:{Style.RESET_ALL}")
 
@@ -293,17 +297,17 @@ def ensure_ollama_and_model(model_name: str) -> bool:
     """Ensure Ollama is installed, running, and the requested model is available."""
     # Check if we're running in Docker
     in_docker = os.environ.get("OLLAMA_BASE_URL", "").startswith("http://ollama:") or os.environ.get("OLLAMA_BASE_URL", "").startswith("http://host.docker.internal:")
-    
+
     # In Docker environment, we need a different approach
     if in_docker:
         ollama_url = os.environ.get("OLLAMA_BASE_URL", "http://ollama:11434")
         return docker.ensure_ollama_and_model(model_name, ollama_url)
-    
+
     # Regular flow for non-Docker environments
     # Check if Ollama is installed
     if not is_ollama_installed():
         print(f"{Fore.YELLOW}Ollama is not installed on your system.{Style.RESET_ALL}")
-        
+
         # Ask if they want to install it
         if questionary.confirm("Do you want to install Ollama?").ask():
             if not install_ollama():
@@ -311,31 +315,31 @@ def ensure_ollama_and_model(model_name: str) -> bool:
         else:
             print(f"{Fore.RED}Ollama is required to use local models.{Style.RESET_ALL}")
             return False
-    
+
     # Make sure the server is running
     if not is_ollama_server_running():
         print(f"{Fore.YELLOW}Starting Ollama server...{Style.RESET_ALL}")
         if not start_ollama_server():
             return False
-    
+
     # Check if the model is already downloaded
     available_models = get_locally_available_models()
     if model_name not in available_models:
         print(f"{Fore.YELLOW}Model {model_name} is not available locally.{Style.RESET_ALL}")
-        
+
         # Ask if they want to download it
         model_size_info = ""
         if "70b" in model_name:
             model_size_info = " This is a large model (up to several GB) and may take a while to download."
         elif "34b" in model_name or "8x7b" in model_name:
             model_size_info = " This is a medium-sized model (1-2 GB) and may take a few minutes to download."
-        
+
         if questionary.confirm(f"Do you want to download the {model_name} model?{model_size_info} The download will happen in the background.").ask():
             return download_model(model_name)
         else:
             print(f"{Fore.RED}The model is required to proceed.{Style.RESET_ALL}")
             return False
-    
+
     return True
 
 
@@ -343,23 +347,23 @@ def delete_model(model_name: str) -> bool:
     """Delete a locally downloaded Ollama model."""
     # Check if we're running in Docker
     in_docker = os.environ.get("OLLAMA_BASE_URL", "").startswith("http://ollama:") or os.environ.get("OLLAMA_BASE_URL", "").startswith("http://host.docker.internal:")
-    
+
     # In Docker environment, delegate to docker module
     if in_docker:
         ollama_url = os.environ.get("OLLAMA_BASE_URL", "http://ollama:11434")
         return docker.delete_model(model_name, ollama_url)
-        
+
     # Non-Docker environment
     if not is_ollama_server_running():
         if not start_ollama_server():
             return False
-    
+
     print(f"{Fore.YELLOW}Deleting model {model_name}...{Style.RESET_ALL}")
-    
+
     try:
         # Use the Ollama CLI to delete the model
         process = subprocess.run(["ollama", "rm", model_name], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        
+
         if process.returncode == 0:
             print(f"{Fore.GREEN}Model {model_name} deleted successfully.{Style.RESET_ALL}")
             return True

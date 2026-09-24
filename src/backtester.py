@@ -364,7 +364,17 @@ class Backtester:
             long_short_ratio = long_exposure / short_exposure if short_exposure > 1e-9 else float("inf")
 
             # Track each day's portfolio value in self.portfolio_values
-            self.portfolio_values.append({"Date": current_date, "Portfolio Value": total_value, "Long Exposure": long_exposure, "Short Exposure": short_exposure, "Gross Exposure": gross_exposure, "Net Exposure": net_exposure, "Long/Short Ratio": long_short_ratio})
+            self.portfolio_values.append(
+                {
+                    "Date": current_date,
+                    "Portfolio Value": total_value,
+                    "Long Exposure": long_exposure,
+                    "Short Exposure": short_exposure,
+                    "Gross Exposure": gross_exposure,
+                    "Net Exposure": net_exposure,
+                    "Long/Short Ratio": long_short_ratio,
+                }
+            )
 
             # ---------------------------------------------------------------
             # 3) Build the table rows to display

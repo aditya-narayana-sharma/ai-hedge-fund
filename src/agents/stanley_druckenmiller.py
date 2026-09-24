@@ -105,11 +105,7 @@ def stanley_druckenmiller_agent(state: AgentState):
         #   35% Growth/Momentum, 20% Risk/Reward, 20% Valuation,
         #   15% Sentiment, 10% Insider Activity = 100%
         total_score = (
-            growth_momentum_analysis["score"] * 0.35
-            + risk_reward_analysis["score"] * 0.20
-            + valuation_analysis["score"] * 0.20
-            + sentiment_analysis["score"] * 0.15
-            + insider_activity["score"] * 0.10
+            growth_momentum_analysis["score"] * 0.35 + risk_reward_analysis["score"] * 0.20 + valuation_analysis["score"] * 0.20 + sentiment_analysis["score"] * 0.15 + insider_activity["score"] * 0.10
         )
 
         max_possible_score = 10
@@ -158,7 +154,7 @@ def stanley_druckenmiller_agent(state: AgentState):
     state["data"]["analyst_signals"]["stanley_druckenmiller_agent"] = druck_analysis
 
     progress.update_status("stanley_druckenmiller_agent", None, "Done")
-    
+
     return {"messages": [message], "data": state["data"]}
 
 
@@ -533,8 +529,8 @@ def generate_druckenmiller_output(
     template = ChatPromptTemplate.from_messages(
         [
             (
-              "system",
-              """You are a Stanley Druckenmiller AI agent, making investment decisions using his principles:
+                "system",
+                """You are a Stanley Druckenmiller AI agent, making investment decisions using his principles:
             
               1. Seek asymmetric risk-reward opportunities (large upside, limited downside).
               2. Emphasize growth, momentum, and market sentiment.
@@ -562,8 +558,8 @@ def generate_druckenmiller_output(
               """,
             ),
             (
-              "human",
-              """Based on the following analysis, create a Druckenmiller-style investment signal.
+                "human",
+                """Based on the following analysis, create a Druckenmiller-style investment signal.
 
               Analysis Data for {ticker}:
               {analysis_data}
@@ -582,11 +578,7 @@ def generate_druckenmiller_output(
     prompt = template.invoke({"analysis_data": json.dumps(analysis_data, indent=2), "ticker": ticker})
 
     def create_default_signal():
-        return StanleyDruckenmillerSignal(
-            signal="neutral",
-            confidence=0.0,
-            reasoning="Error in analysis, defaulting to neutral"
-        )
+        return StanleyDruckenmillerSignal(signal="neutral", confidence=0.0, reasoning="Error in analysis, defaulting to neutral")
 
     return call_llm(
         prompt=prompt,

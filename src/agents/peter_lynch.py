@@ -20,6 +20,7 @@ class PeterLynchSignal(BaseModel):
     """
     Container for the Peter Lynch-style output signal.
     """
+
     signal: Literal["bullish", "bearish", "neutral"]
     confidence: float
     reasoning: str
@@ -107,11 +108,7 @@ def peter_lynch_agent(state: AgentState):
         #   30% Growth, 25% Valuation, 20% Fundamentals,
         #   15% Sentiment, 10% Insider Activity = 100%
         total_score = (
-            growth_analysis["score"] * 0.30
-            + valuation_analysis["score"] * 0.25
-            + fundamentals_analysis["score"] * 0.20
-            + sentiment_analysis["score"] * 0.15
-            + insider_activity["score"] * 0.10
+            growth_analysis["score"] * 0.30 + valuation_analysis["score"] * 0.25 + fundamentals_analysis["score"] * 0.20 + sentiment_analysis["score"] * 0.15 + insider_activity["score"] * 0.10
         )
 
         max_possible_score = 10.0
@@ -492,11 +489,7 @@ def generate_lynch_output(
     prompt = template.invoke({"analysis_data": json.dumps(analysis_data, indent=2), "ticker": ticker})
 
     def create_default_signal():
-        return PeterLynchSignal(
-            signal="neutral",
-            confidence=0.0,
-            reasoning="Error in analysis; defaulting to neutral"
-        )
+        return PeterLynchSignal(signal="neutral", confidence=0.0, reasoning="Error in analysis; defaulting to neutral")
 
     return call_llm(
         prompt=prompt,

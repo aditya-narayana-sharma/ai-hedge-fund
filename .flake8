@@ -1,0 +1,14 @@
+; flake8 does not read pyproject.toml, so its configuration lives here.
+; Line length matches [tool.black] in pyproject.toml.
+[flake8]
+max-line-length = 200
+; E203 and W503 disagree with black's slicing and line-break style.
+extend-ignore = E203, W503
+exclude =
+    .git,
+    __pycache__,
+    .venv,
+    venv,
+    app/frontend,
+    dist,
+    build

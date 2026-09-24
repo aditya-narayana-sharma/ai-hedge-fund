@@ -80,7 +80,14 @@ def cathie_wood_agent(state: AgentState):
         else:
             signal = "neutral"
 
-        analysis_data[ticker] = {"signal": signal, "score": total_score, "max_score": max_possible_score, "disruptive_analysis": disruptive_analysis, "innovation_analysis": innovation_analysis, "valuation_analysis": valuation_analysis}
+        analysis_data[ticker] = {
+            "signal": signal,
+            "score": total_score,
+            "max_score": max_possible_score,
+            "disruptive_analysis": disruptive_analysis,
+            "innovation_analysis": innovation_analysis,
+            "valuation_analysis": valuation_analysis,
+        }
 
         progress.update_status("cathie_wood_agent", ticker, "Generating Cathie Wood analysis")
         cw_output = generate_cathie_wood_output(
@@ -294,7 +301,9 @@ def analyze_innovation_growth(metrics: list, financial_line_items: list) -> dict
         details.append("Insufficient CAPEX data")
 
     # 5. Growth Reinvestment Analysis
-    dividends = [item.dividends_and_other_cash_distributions for item in financial_line_items if hasattr(item, "dividends_and_other_cash_distributions") and item.dividends_and_other_cash_distributions]
+    dividends = [
+        item.dividends_and_other_cash_distributions for item in financial_line_items if hasattr(item, "dividends_and_other_cash_distributions") and item.dividends_and_other_cash_distributions
+    ]
     if dividends and fcf_vals:
         latest_payout_ratio = dividends[0] / fcf_vals[0] if fcf_vals[0] != 0 else 1
         if latest_payout_ratio < 0.2:  # Low dividend payout ratio suggests reinvestment focus
