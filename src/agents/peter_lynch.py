@@ -1,11 +1,9 @@
 from src.graph.state import AgentState, show_agent_reasoning
 from src.tools.api import (
-    get_financial_metrics,
     get_market_cap,
     search_line_items,
     get_insider_trades,
     get_company_news,
-    get_prices,
 )
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage
@@ -42,7 +40,6 @@ def peter_lynch_agent(state: AgentState):
     """
 
     data = state["data"]
-    start_date = data["start_date"]
     end_date = data["end_date"]
     tickers = data["tickers"]
 
@@ -50,9 +47,6 @@ def peter_lynch_agent(state: AgentState):
     lynch_analysis = {}
 
     for ticker in tickers:
-        progress.update_status("peter_lynch_agent", ticker, "Fetching financial metrics")
-        metrics = get_financial_metrics(ticker, end_date, period="annual", limit=5)
-
         progress.update_status("peter_lynch_agent", ticker, "Gathering financial line items")
         # Relevant line items for Peter Lynch's approach
         financial_line_items = search_line_items(
@@ -84,9 +78,6 @@ def peter_lynch_agent(state: AgentState):
 
         progress.update_status("peter_lynch_agent", ticker, "Fetching company news")
         company_news = get_company_news(ticker, end_date, start_date=None, limit=50)
-
-        progress.update_status("peter_lynch_agent", ticker, "Fetching recent price data for reference")
-        prices = get_prices(ticker, start_date=start_date, end_date=end_date)
 
         # Perform sub-analyses:
         progress.update_status("peter_lynch_agent", ticker, "Analyzing growth")

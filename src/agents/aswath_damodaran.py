@@ -91,8 +91,6 @@ def aswath_damodaran_agent(state: AgentState):
         else:
             signal = "neutral"
 
-        confidence = min(max(abs(margin_of_safety or 0) * 200, 10), 100)  # simple proxy 10‑100
-
         analysis_data[ticker] = {
             "signal": signal,
             "score": total_score,
@@ -267,7 +265,7 @@ def analyze_relative_valuation(metrics: list) -> dict[str, any]:
     elif ttm_pe > 1.3 * median_pe:
         score, desc = -1, f"P/E {ttm_pe:.1f} vs. median {median_pe:.1f} (expensive)"
     else:
-        score, desc = 0, f"P/E inline with history"
+        score, desc = 0, "P/E inline with history"
 
     return {"score": score, "max_score": max_score, "details": desc}
 

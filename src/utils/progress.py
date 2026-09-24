@@ -131,7 +131,7 @@ class AgentProgress:
                 return (1, agent_name)
 
         for agent_name, info in sorted(self.agent_status.get(run_id, {}).items(), key=sort_key):
-            status = info["status"]
+            status = info["status"] or ""
             ticker = info["ticker"]
             # Create the status text with appropriate styling
             if status.lower() == "done":

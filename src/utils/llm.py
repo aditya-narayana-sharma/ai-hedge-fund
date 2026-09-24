@@ -1,7 +1,8 @@
 """Helper functions for LLM"""
 
 import json
-from typing import TypeVar, Type, Optional, Any
+from typing import TypeVar, Type, Optional, Any, cast
+from langchain_core.runnables import Runnable
 from pydantic import BaseModel
 from src.llm.models import get_model, get_model_info
 from src.utils.progress import progress
@@ -35,14 +36,17 @@ def call_llm(
     """
 
     model_info = get_model_info(model_name, model_provider)
-    llm = get_model(model_name, model_provider)
+    supports_json_mode = not (model_info and not model_info.has_json_mode())
 
-    # For non-JSON support models, we can use structured output
-    if not (model_info and not model_info.has_json_mode()):
-        llm = llm.with_structured_output(
+    chat_model = get_model(model_name, model_provider)
+    llm: Runnable = (
+        chat_model.with_structured_output(
             pydantic_model,
             method="json_mode",
         )
+        if supports_json_mode
+        else chat_model
+    )
 
     # Call the LLM with retries
     for attempt in range(max_retries):
@@ -50,13 +54,15 @@ def call_llm(
             # Call the LLM
             result = llm.invoke(prompt)
 
-            # For non-JSON support models, we need to extract and parse the JSON manually
-            if model_info and not model_info.has_json_mode():
-                parsed_result = extract_json_from_response(result.content)
-                if parsed_result:
-                    return pydantic_model(**parsed_result)
-            else:
-                return result
+            if supports_json_mode:
+                # with_structured_output already returned an instance.
+                return cast(T, result)
+
+            # Otherwise the model answered in prose and the JSON has to be dug out.
+            content = result.content
+            parsed_result = extract_json_from_response(content if isinstance(content, str) else json.dumps(content))
+            if parsed_result:
+                return pydantic_model(**parsed_result)
 
         except Exception as e:
             if agent_name:
@@ -75,22 +81,21 @@ def call_llm(
 
 def create_default_response(model_class: Type[T]) -> T:
     """Creates a safe default response based on the model's fields."""
-    default_values = {}
+    default_values: dict[str, Any] = {}
     for field_name, field in model_class.model_fields.items():
-        if field.annotation == str:
+        annotation = field.annotation
+        if annotation is str:
             default_values[field_name] = "Error in analysis, using default"
-        elif field.annotation == float:
+        elif annotation is float:
             default_values[field_name] = 0.0
-        elif field.annotation == int:
+        elif annotation is int:
             default_values[field_name] = 0
-        elif hasattr(field.annotation, "__origin__") and field.annotation.__origin__ == dict:
+        elif getattr(annotation, "__origin__", None) is dict:
             default_values[field_name] = {}
         else:
             # For other types (like Literal), try to use the first allowed value
-            if hasattr(field.annotation, "__args__"):
-                default_values[field_name] = field.annotation.__args__[0]
-            else:
-                default_values[field_name] = None
+            args = getattr(annotation, "__args__", None)
+            default_values[field_name] = args[0] if args else None
 
     return model_class(**default_values)
 

@@ -1,10 +1,10 @@
-from __future__ import annotations
-
 """Valuation Agent
 
 Implements four complementary valuation methodologies and aggregates them with
-configurable weights. 
+configurable weights.
 """
+
+from __future__ import annotations
 
 from statistics import median
 import json

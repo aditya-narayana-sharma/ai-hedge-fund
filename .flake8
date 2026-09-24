@@ -2,8 +2,11 @@
 ; Line length matches [tool.black] in pyproject.toml.
 [flake8]
 max-line-length = 200
-; E203 and W503 disagree with black's slicing and line-break style.
-extend-ignore = E203, W503
+; E203 and W503 disagree with black's slicing and line-break style; black owns
+; line length, and the remaining E501/W293 hits are inside multi-line LLM
+; prompt literals where the whitespace is part of the prompt. E266 is the
+; project's ##### section ##### marker convention.
+extend-ignore = E203, W503, E501, W293, E266
 exclude =
     .git,
     __pycache__,

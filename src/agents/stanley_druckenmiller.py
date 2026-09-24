@@ -1,6 +1,5 @@
 from src.graph.state import AgentState, show_agent_reasoning
 from src.tools.api import (
-    get_financial_metrics,
     get_market_cap,
     search_line_items,
     get_insider_trades,
@@ -42,9 +41,6 @@ def stanley_druckenmiller_agent(state: AgentState):
     druck_analysis = {}
 
     for ticker in tickers:
-        progress.update_status("stanley_druckenmiller_agent", ticker, "Fetching financial metrics")
-        metrics = get_financial_metrics(ticker, end_date, period="annual", limit=5)
-
         progress.update_status("stanley_druckenmiller_agent", ticker, "Gathering financial line items")
         # Include relevant line items for Stan Druckenmiller's approach:
         #   - Growth & momentum: revenue, EPS, operating_income, ...
