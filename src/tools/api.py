@@ -22,35 +22,32 @@ from src.data.models import (
 _cache = get_cache()
 
 
+def _api_headers() -> dict[str, str]:
+    """Auth headers for financialdatasets.ai. The five free tickers need none."""
+    if api_key := os.environ.get("FINANCIAL_DATASETS_API_KEY"):
+        return {"X-API-KEY": api_key}
+    return {}
+
+
 def get_prices(ticker: str, start_date: str, end_date: str) -> list[Price]:
     """Fetch price data from cache or API."""
-    # Check cache first
-    if cached_data := _cache.get_prices(ticker):
-        # Filter cached data by date range and convert to Price objects
-        filtered_data = [Price(**price) for price in cached_data if start_date <= price["time"] <= end_date]
-        if filtered_data:
-            return filtered_data
+    # Serve from cache only when the whole requested window has been fetched.
+    if (cached_data := _cache.get_prices(ticker, start_date, end_date)) is not None:
+        return [Price(**price) for price in cached_data]
 
-    # If not in cache or no data in range, fetch from API
-    headers = {}
-    if api_key := os.environ.get("FINANCIAL_DATASETS_API_KEY"):
-        headers["X-API-KEY"] = api_key
+    # Fetch only the sub-windows that are still missing, then merge.
+    headers = _api_headers()
+    for gap_start, gap_end in _cache.price_gaps(ticker, start_date, end_date):
+        url = f"https://api.financialdatasets.ai/prices/?ticker={ticker}&interval=day&interval_multiplier=1&start_date={gap_start}&end_date={gap_end}"
+        response = requests.get(url, headers=headers)
+        if response.status_code != 200:
+            raise Exception(f"Error fetching data: {ticker} - {response.status_code} - {response.text}")
 
-    url = f"https://api.financialdatasets.ai/prices/?ticker={ticker}&interval=day&interval_multiplier=1&start_date={start_date}&end_date={end_date}"
-    response = requests.get(url, headers=headers)
-    if response.status_code != 200:
-        raise Exception(f"Error fetching data: {ticker} - {response.status_code} - {response.text}")
+        price_response = PriceResponse(**response.json())
+        _cache.set_prices(ticker, [p.model_dump() for p in price_response.prices], gap_start, gap_end)
 
-    # Parse response with Pydantic model
-    price_response = PriceResponse(**response.json())
-    prices = price_response.prices
-
-    if not prices:
-        return []
-
-    # Cache the results as dicts
-    _cache.set_prices(ticker, [p.model_dump() for p in prices])
-    return prices
+    cached_data = _cache.get_prices(ticker, start_date, end_date) or []
+    return [Price(**price) for price in cached_data]
 
 
 def get_financial_metrics(
@@ -60,35 +57,24 @@ def get_financial_metrics(
     limit: int = 10,
 ) -> list[FinancialMetrics]:
     """Fetch financial metrics from cache or API."""
-    # Check cache first
-    if cached_data := _cache.get_financial_metrics(ticker):
-        # Filter cached data by date and limit
-        filtered_data = [FinancialMetrics(**metric) for metric in cached_data if metric["report_period"] <= end_date]
-        filtered_data.sort(key=lambda x: x.report_period, reverse=True)
-        if filtered_data:
-            return filtered_data[:limit]
-
-    # If not in cache or insufficient data, fetch from API
-    headers = {}
-    if api_key := os.environ.get("FINANCIAL_DATASETS_API_KEY"):
-        headers["X-API-KEY"] = api_key
+    # Serve from cache only when it holds enough reports to satisfy `limit`.
+    if (cached_data := _cache.get_financial_metrics(ticker, end_date, period, limit)) is not None:
+        return [FinancialMetrics(**metric) for metric in cached_data]
 
     url = f"https://api.financialdatasets.ai/financial-metrics/?ticker={ticker}&report_period_lte={end_date}&limit={limit}&period={period}"
-    response = requests.get(url, headers=headers)
+    response = requests.get(url, headers=_api_headers())
     if response.status_code != 200:
         raise Exception(f"Error fetching data: {ticker} - {response.status_code} - {response.text}")
 
     # Parse response with Pydantic model
     metrics_response = FinancialMetricsResponse(**response.json())
-    # Return the FinancialMetrics objects directly instead of converting to dict
     financial_metrics = metrics_response.financial_metrics
 
     if not financial_metrics:
         return []
 
-    # Cache the results as dicts
-    _cache.set_financial_metrics(ticker, [m.model_dump() for m in financial_metrics])
-    return financial_metrics
+    _cache.set_financial_metrics(ticker, [m.model_dump() for m in financial_metrics], end_date, period, limit)
+    return financial_metrics[:limit]
 
 
 def search_line_items(
@@ -98,11 +84,9 @@ def search_line_items(
     period: str = "ttm",
     limit: int = 10,
 ) -> list[LineItem]:
-    """Fetch line items from API."""
-    # If not in cache or insufficient data, fetch from API
-    headers = {}
-    if api_key := os.environ.get("FINANCIAL_DATASETS_API_KEY"):
-        headers["X-API-KEY"] = api_key
+    """Fetch line items from cache or API."""
+    if (cached_data := _cache.get_line_items(ticker, line_items, end_date, period, limit)) is not None:
+        return [LineItem(**item) for item in cached_data]
 
     url = "https://api.financialdatasets.ai/financials/search/line-items"
 
@@ -113,7 +97,7 @@ def search_line_items(
         "period": period,
         "limit": limit,
     }
-    response = requests.post(url, headers=headers, json=body)
+    response = requests.post(url, headers=_api_headers(), json=body)
     if response.status_code != 200:
         raise Exception(f"Error fetching data: {ticker} - {response.status_code} - {response.text}")
     data = response.json()
@@ -122,7 +106,7 @@ def search_line_items(
     if not search_results:
         return []
 
-    # Cache the results
+    _cache.set_line_items(ticker, [item.model_dump() for item in search_results], line_items, end_date, period, limit)
     return search_results[:limit]
 
 
@@ -133,19 +117,13 @@ def get_insider_trades(
     limit: int = 1000,
 ) -> list[InsiderTrade]:
     """Fetch insider trades from cache or API."""
-    # Check cache first
-    if cached_data := _cache.get_insider_trades(ticker):
-        # Filter cached data by date range
-        filtered_data = [InsiderTrade(**trade) for trade in cached_data if (start_date is None or (trade.get("transaction_date") or trade["filing_date"]) >= start_date) and (trade.get("transaction_date") or trade["filing_date"]) <= end_date]
-        filtered_data.sort(key=lambda x: x.transaction_date or x.filing_date, reverse=True)
-        if filtered_data:
-            return filtered_data
+    # Serve from cache only when the whole requested window has been fetched.
+    if (cached_data := _cache.get_insider_trades(ticker, end_date, start_date)) is not None:
+        trades = [InsiderTrade(**trade) for trade in cached_data]
+        trades.sort(key=lambda trade: trade.transaction_date or trade.filing_date, reverse=True)
+        return trades
 
-    # If not in cache or insufficient data, fetch from API
-    headers = {}
-    if api_key := os.environ.get("FINANCIAL_DATASETS_API_KEY"):
-        headers["X-API-KEY"] = api_key
-
+    headers = _api_headers()
     all_trades = []
     current_end_date = end_date
 
@@ -179,11 +157,7 @@ def get_insider_trades(
         if current_end_date <= start_date:
             break
 
-    if not all_trades:
-        return []
-
-    # Cache the results
-    _cache.set_insider_trades(ticker, [trade.model_dump() for trade in all_trades])
+    _cache.set_insider_trades(ticker, [trade.model_dump() for trade in all_trades], end_date, start_date)
     return all_trades
 
 
@@ -194,19 +168,13 @@ def get_company_news(
     limit: int = 1000,
 ) -> list[CompanyNews]:
     """Fetch company news from cache or API."""
-    # Check cache first
-    if cached_data := _cache.get_company_news(ticker):
-        # Filter cached data by date range
-        filtered_data = [CompanyNews(**news) for news in cached_data if (start_date is None or news["date"] >= start_date) and news["date"] <= end_date]
-        filtered_data.sort(key=lambda x: x.date, reverse=True)
-        if filtered_data:
-            return filtered_data
+    # Serve from cache only when the whole requested window has been fetched.
+    if (cached_data := _cache.get_company_news(ticker, end_date, start_date)) is not None:
+        news_items = [CompanyNews(**news) for news in cached_data]
+        news_items.sort(key=lambda item: item.date, reverse=True)
+        return news_items
 
-    # If not in cache or insufficient data, fetch from API
-    headers = {}
-    if api_key := os.environ.get("FINANCIAL_DATASETS_API_KEY"):
-        headers["X-API-KEY"] = api_key
-
+    headers = _api_headers()
     all_news = []
     current_end_date = end_date
 
@@ -240,11 +208,7 @@ def get_company_news(
         if current_end_date <= start_date:
             break
 
-    if not all_news:
-        return []
-
-    # Cache the results
-    _cache.set_company_news(ticker, [news.model_dump() for news in all_news])
+    _cache.set_company_news(ticker, [news.model_dump() for news in all_news], end_date, start_date)
     return all_news
 
 
@@ -255,13 +219,8 @@ def get_market_cap(
     """Fetch market cap from the API."""
     # Check if end_date is today
     if end_date == datetime.datetime.now().strftime("%Y-%m-%d"):
-        # Get the market cap from company facts API
-        headers = {}
-        if api_key := os.environ.get("FINANCIAL_DATASETS_API_KEY"):
-            headers["X-API-KEY"] = api_key
-
         url = f"https://api.financialdatasets.ai/company/facts/?ticker={ticker}"
-        response = requests.get(url, headers=headers)
+        response = requests.get(url, headers=_api_headers())
         if response.status_code != 200:
             print(f"Error fetching company facts: {ticker} - {response.status_code}")
             return None
