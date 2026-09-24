@@ -23,6 +23,7 @@ from src.utils.analysts import ANALYST_ORDER
 from src.utils.charts import plt, render_figure
 from src.utils.display import format_backtest_row, print_backtest_results
 from src.utils.ollama import ensure_ollama_and_model
+from src.utils.progress import progress
 
 init(autoreset=True)
 
@@ -41,6 +42,7 @@ class Backtester:
         initial_margin_requirement: float = 0.0,
         position_limit: float = DEFAULT_POSITION_LIMIT,
         chart_output: str | None = None,
+        verbose: bool = True,
     ):
         """
         :param agent: The trading agent (Callable).
@@ -63,6 +65,8 @@ class Backtester:
         self.selected_analysts = selected_analysts
         self.position_limit = position_limit
         self.chart_output = chart_output
+        # The API drives this class too, where the rewritten tables are noise.
+        self.verbose = verbose
 
         # Initialize portfolio with support for long/short positions
         self.portfolio_values = []
@@ -280,10 +284,14 @@ class Backtester:
         else:
             self.portfolio_values = []
 
-        for current_date in dates:
+        for day_index, current_date in enumerate(dates, start=1):
             lookback_start = (current_date - timedelta(days=30)).strftime("%Y-%m-%d")
             current_date_str = current_date.strftime("%Y-%m-%d")
             previous_date_str = (current_date - timedelta(days=1)).strftime("%Y-%m-%d")
+
+            # Surfaces day-by-day progress to SSE clients; the CLI shows it in
+            # the live status table.
+            progress.update_status("backtester", None, f"Simulating {current_date_str} ({day_index}/{len(dates)})")
 
             # Skip if there's no prior day to look back (i.e., first date in the range)
             if lookback_start == current_date_str:
@@ -447,7 +455,8 @@ class Backtester:
             )
 
             table_rows.extend(date_rows)
-            print_backtest_results(table_rows)
+            if self.verbose:
+                print_backtest_results(table_rows)
 
         # Store the final performance metrics for reference in analyze_performance
         self.performance_metrics = performance_metrics
@@ -503,25 +512,97 @@ class Backtester:
             performance_metrics["max_drawdown"] = 0.0
             performance_metrics["max_drawdown_date"] = None
 
-    def analyze_performance(self):
-        """Creates a performance DataFrame, prints summary stats, and plots equity curve."""
+    def performance_summary(self) -> dict:
+        """Compute the performance summary without printing or plotting.
+
+        Split out of ``analyze_performance`` so ``POST /backtest`` can serve the
+        same numbers the CLI prints, instead of re-deriving them.
+        """
         if not self.portfolio_values:
-            print("No portfolio data found. Please run the backtest first.")
-            return pd.DataFrame()
+            return {}
 
         performance_df = pd.DataFrame(self.portfolio_values).set_index("Date")
         if performance_df.empty:
-            print("No valid performance data to analyze.")
-            return performance_df
+            return {}
 
         final_portfolio_value = performance_df["Portfolio Value"].iloc[-1]
         total_return = ((final_portfolio_value - self.initial_capital) / self.initial_capital) * 100
 
+        performance_df["Daily Return"] = performance_df["Portfolio Value"].pct_change().fillna(0)
+        daily_rf = 0.0434 / 252  # daily risk-free rate
+        mean_daily_return = performance_df["Daily Return"].mean()
+        std_daily_return = performance_df["Daily Return"].std()
+
+        if std_daily_return != 0:
+            annualized_sharpe = np.sqrt(252) * ((mean_daily_return - daily_rf) / std_daily_return)
+        else:
+            annualized_sharpe = 0.0
+
+        # Prefer the value accumulated during the run; recompute only if absent.
+        max_drawdown = getattr(self, "performance_metrics", {}).get("max_drawdown")
+        max_drawdown_date = getattr(self, "performance_metrics", {}).get("max_drawdown_date")
+        if max_drawdown is None:
+            rolling_max = performance_df["Portfolio Value"].cummax()
+            drawdown = (performance_df["Portfolio Value"] - rolling_max) / rolling_max
+            max_drawdown = drawdown.min() * 100
+            max_drawdown_date = drawdown.idxmin().strftime("%Y-%m-%d") if pd.notnull(drawdown.idxmin()) else None
+
+        winning_days = len(performance_df[performance_df["Daily Return"] > 0])
+        losing_days = len(performance_df[performance_df["Daily Return"] < 0])
+        total_days = max(len(performance_df) - 1, 1)
+        win_rate = (winning_days / total_days) * 100
+
+        positive_returns = performance_df[performance_df["Daily Return"] > 0]["Daily Return"]
+        negative_returns = performance_df[performance_df["Daily Return"] < 0]["Daily Return"]
+        avg_win = positive_returns.mean() if not positive_returns.empty else 0
+        avg_loss = abs(negative_returns.mean()) if not negative_returns.empty else 0
+        if avg_loss != 0:
+            win_loss_ratio = avg_win / avg_loss
+        else:
+            win_loss_ratio = float("inf") if avg_win > 0 else 0
+
+        returns_binary = (performance_df["Daily Return"] > 0).astype(int)
+        if len(returns_binary) > 0:
+            max_consecutive_wins = max((len(list(g)) for k, g in itertools.groupby(returns_binary) if k == 1), default=0)
+            max_consecutive_losses = max((len(list(g)) for k, g in itertools.groupby(returns_binary) if k == 0), default=0)
+        else:
+            max_consecutive_wins = 0
+            max_consecutive_losses = 0
+
+        total_realized_gains = sum(self.portfolio["realized_gains"][ticker]["long"] + self.portfolio["realized_gains"][ticker]["short"] for ticker in self.tickers)
+
+        return {
+            "performance_df": performance_df,
+            "final_portfolio_value": float(final_portfolio_value),
+            "total_return_pct": float(total_return),
+            "total_realized_gains": float(total_realized_gains),
+            "sharpe_ratio": float(annualized_sharpe),
+            "sortino_ratio": getattr(self, "performance_metrics", {}).get("sortino_ratio"),
+            "max_drawdown_pct": float(max_drawdown),
+            "max_drawdown_date": max_drawdown_date,
+            "win_rate_pct": float(win_rate),
+            "win_loss_ratio": float(win_loss_ratio),
+            "winning_days": winning_days,
+            "losing_days": losing_days,
+            "total_days": total_days,
+            "max_consecutive_wins": max_consecutive_wins,
+            "max_consecutive_losses": max_consecutive_losses,
+        }
+
+    def analyze_performance(self):
+        """Creates a performance DataFrame, prints summary stats, and plots equity curve."""
+        summary = self.performance_summary()
+        if not summary:
+            print("No portfolio data found. Please run the backtest first.")
+            return pd.DataFrame()
+
+        performance_df = summary["performance_df"]
+        total_return = summary["total_return_pct"]
+
         print(f"\n{Fore.WHITE}{Style.BRIGHT}PORTFOLIO PERFORMANCE SUMMARY:{Style.RESET_ALL}")
         print(f"Total Return: {Fore.GREEN if total_return >= 0 else Fore.RED}{total_return:.2f}%{Style.RESET_ALL}")
 
-        # Print realized P&L for informational purposes only
-        total_realized_gains = sum(self.portfolio["realized_gains"][ticker]["long"] + self.portfolio["realized_gains"][ticker]["short"] for ticker in self.tickers)
+        total_realized_gains = summary["total_realized_gains"]
         print(f"Total Realized Gains/Losses: {Fore.GREEN if total_realized_gains >= 0 else Fore.RED}${total_realized_gains:,.2f}{Style.RESET_ALL}")
 
         # Plot the portfolio value over time
@@ -533,63 +614,20 @@ class Backtester:
         plt.grid(True)
         render_figure(self.chart_output)
 
-        # Compute daily returns
-        performance_df["Daily Return"] = performance_df["Portfolio Value"].pct_change().fillna(0)
-        daily_rf = 0.0434 / 252  # daily risk-free rate
-        mean_daily_return = performance_df["Daily Return"].mean()
-        std_daily_return = performance_df["Daily Return"].std()
+        print(f"\nSharpe Ratio: {Fore.YELLOW}{summary['sharpe_ratio']:.2f}{Style.RESET_ALL}")
 
-        # Annualized Sharpe Ratio
-        if std_daily_return != 0:
-            annualized_sharpe = np.sqrt(252) * ((mean_daily_return - daily_rf) / std_daily_return)
-        else:
-            annualized_sharpe = 0
-        print(f"\nSharpe Ratio: {Fore.YELLOW}{annualized_sharpe:.2f}{Style.RESET_ALL}")
-
-        # Use the max drawdown value calculated during the backtest if available
-        max_drawdown = getattr(self, "performance_metrics", {}).get("max_drawdown")
-        max_drawdown_date = getattr(self, "performance_metrics", {}).get("max_drawdown_date")
-
-        # If no value exists yet, calculate it
-        if max_drawdown is None:
-            rolling_max = performance_df["Portfolio Value"].cummax()
-            drawdown = (performance_df["Portfolio Value"] - rolling_max) / rolling_max
-            max_drawdown = drawdown.min() * 100
-            max_drawdown_date = drawdown.idxmin().strftime("%Y-%m-%d") if pd.notnull(drawdown.idxmin()) else None
-
+        max_drawdown = summary["max_drawdown_pct"]
+        max_drawdown_date = summary["max_drawdown_date"]
         if max_drawdown_date:
             print(f"Maximum Drawdown: {Fore.RED}{abs(max_drawdown):.2f}%{Style.RESET_ALL} (on {max_drawdown_date})")
         else:
             print(f"Maximum Drawdown: {Fore.RED}{abs(max_drawdown):.2f}%{Style.RESET_ALL}")
 
-        # Win Rate
-        winning_days = len(performance_df[performance_df["Daily Return"] > 0])
-        total_days = max(len(performance_df) - 1, 1)
-        win_rate = (winning_days / total_days) * 100
-        print(f"Win Rate: {Fore.GREEN}{win_rate:.2f}%{Style.RESET_ALL}")
+        print(f"Win Rate: {Fore.GREEN}{summary['win_rate_pct']:.2f}%{Style.RESET_ALL}")
+        print(f"Win/Loss Ratio: {Fore.GREEN}{summary['win_loss_ratio']:.2f}{Style.RESET_ALL}")
 
-        # Average Win/Loss Ratio
-        positive_returns = performance_df[performance_df["Daily Return"] > 0]["Daily Return"]
-        negative_returns = performance_df[performance_df["Daily Return"] < 0]["Daily Return"]
-        avg_win = positive_returns.mean() if not positive_returns.empty else 0
-        avg_loss = abs(negative_returns.mean()) if not negative_returns.empty else 0
-        if avg_loss != 0:
-            win_loss_ratio = avg_win / avg_loss
-        else:
-            win_loss_ratio = float("inf") if avg_win > 0 else 0
-        print(f"Win/Loss Ratio: {Fore.GREEN}{win_loss_ratio:.2f}{Style.RESET_ALL}")
-
-        # Maximum Consecutive Wins / Losses
-        returns_binary = (performance_df["Daily Return"] > 0).astype(int)
-        if len(returns_binary) > 0:
-            max_consecutive_wins = max((len(list(g)) for k, g in itertools.groupby(returns_binary) if k == 1), default=0)
-            max_consecutive_losses = max((len(list(g)) for k, g in itertools.groupby(returns_binary) if k == 0), default=0)
-        else:
-            max_consecutive_wins = 0
-            max_consecutive_losses = 0
-
-        print(f"Max Consecutive Wins: {Fore.GREEN}{max_consecutive_wins}{Style.RESET_ALL}")
-        print(f"Max Consecutive Losses: {Fore.RED}{max_consecutive_losses}{Style.RESET_ALL}")
+        print(f"Max Consecutive Wins: {Fore.GREEN}{summary['max_consecutive_wins']}{Style.RESET_ALL}")
+        print(f"Max Consecutive Losses: {Fore.RED}{summary['max_consecutive_losses']}{Style.RESET_ALL}")
 
         return performance_df
 

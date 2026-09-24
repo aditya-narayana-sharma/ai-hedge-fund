@@ -15,8 +15,8 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover"
-import { type ModelItem } from "@/data/models"
 import { cn } from "@/lib/utils"
+import { type ModelItem } from "@/services/types"
 
 interface ModelSelectorProps {
   models: ModelItem[];

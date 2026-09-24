@@ -1,8 +1,10 @@
-import sys
-from pathlib import Path
+"""AI Hedge Fund backend.
 
-# Add the src directory to Python path for imports
-# This is a temporary solution while we develop the backend
-src_path = str(Path(__file__).parent.parent.parent / "src")
-if src_path not in sys.path:
-    sys.path.append(src_path)
+There used to be a sys.path shim here that appended ``<root>/src`` as a
+"temporary solution". It was inert — every import in this package uses the
+``src.*`` prefix, which resolves from the repository root — and it encouraged
+running uvicorn from ``app/backend``, where ``app.backend.routes`` cannot be
+imported at all. Start the server from the repository root instead:
+
+    poetry run uvicorn app.backend.main:app --reload
+"""

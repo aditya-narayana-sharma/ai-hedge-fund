@@ -1,15 +1,17 @@
-import os
 import json
+import os
+from enum import Enum
+from pathlib import Path
+from typing import List, Tuple
+
 from langchain_anthropic import ChatAnthropic
+from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_deepseek import ChatDeepSeek
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_groq import ChatGroq
-from langchain_openai import ChatOpenAI
 from langchain_ollama import ChatOllama
-from enum import Enum
+from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
-from typing import Tuple, List
-from pathlib import Path
 
 
 class ModelProvider(str, Enum):
@@ -29,23 +31,24 @@ class LLMModel(BaseModel):
     display_name: str
     model_name: str
     provider: ModelProvider
+    # Declared per model in api_models.json / ollama_models.json so a new model
+    # ships its capability alongside its name. The previous substring
+    # allow-list ("llama3"/"neural-chat") had never been updated for the Ollama
+    # catalog, so gemma3, qwen3 and mistral-small3.1 silently took the manual
+    # parsing path.
+    supports_json_mode: bool = True
 
     def to_choice_tuple(self) -> Tuple[str, str, str]:
         """Convert to format needed for questionary choices"""
         return (self.display_name, self.model_name, self.provider.value)
 
     def is_custom(self) -> bool:
-        """Check if the model is a Gemini model"""
+        """Check if this entry is the free-text 'custom model' placeholder"""
         return self.model_name == "-"
 
     def has_json_mode(self) -> bool:
         """Check if the model supports JSON mode"""
-        if self.is_deepseek() or self.is_gemini():
-            return False
-        # Only certain Ollama models support JSON mode
-        if self.is_ollama():
-            return "llama3" in self.model_name or "neural-chat" in self.model_name
-        return True
+        return self.supports_json_mode
 
     def is_deepseek(self) -> bool:
         """Check if the model is a DeepSeek model"""
@@ -63,9 +66,9 @@ class LLMModel(BaseModel):
 # Load models from JSON file
 def load_models_from_json(json_path: str) -> List[LLMModel]:
     """Load models from a JSON file"""
-    with open(json_path, 'r') as f:
+    with open(json_path, "r") as f:
         models_data = json.load(f)
-    
+
     models = []
     for model_data in models_data:
         # Convert string provider to ModelProvider enum
@@ -74,7 +77,8 @@ def load_models_from_json(json_path: str) -> List[LLMModel]:
             LLMModel(
                 display_name=model_data["display_name"],
                 model_name=model_data["model_name"],
-                provider=provider_enum
+                provider=provider_enum,
+                supports_json_mode=model_data.get("supports_json_mode", True),
             )
         )
     return models
@@ -104,12 +108,12 @@ def get_model_info(model_name: str, model_provider: str) -> LLMModel | None:
     return next((model for model in all_models if model.model_name == model_name and model.provider == model_provider), None)
 
 
-def get_model(model_name: str, model_provider: ModelProvider) -> ChatOpenAI | ChatGroq | ChatOllama | None:
+def get_model(model_name: str, model_provider: ModelProvider) -> BaseChatModel:
     if model_provider == ModelProvider.GROQ:
         api_key = os.getenv("GROQ_API_KEY")
         if not api_key:
             # Print error to console
-            print(f"API Key Error: Please make sure GROQ_API_KEY is set in your .env file.")
+            print("API Key Error: Please make sure GROQ_API_KEY is set in your .env file.")
             raise ValueError("Groq API key not found.  Please make sure GROQ_API_KEY is set in your .env file.")
         return ChatGroq(model=model_name, api_key=api_key)
     elif model_provider == ModelProvider.OPENAI:
@@ -118,25 +122,25 @@ def get_model(model_name: str, model_provider: ModelProvider) -> ChatOpenAI | Ch
         base_url = os.getenv("OPENAI_API_BASE")
         if not api_key:
             # Print error to console
-            print(f"API Key Error: Please make sure OPENAI_API_KEY is set in your .env file.")
+            print("API Key Error: Please make sure OPENAI_API_KEY is set in your .env file.")
             raise ValueError("OpenAI API key not found.  Please make sure OPENAI_API_KEY is set in your .env file.")
         return ChatOpenAI(model=model_name, api_key=api_key, base_url=base_url)
     elif model_provider == ModelProvider.ANTHROPIC:
         api_key = os.getenv("ANTHROPIC_API_KEY")
         if not api_key:
-            print(f"API Key Error: Please make sure ANTHROPIC_API_KEY is set in your .env file.")
+            print("API Key Error: Please make sure ANTHROPIC_API_KEY is set in your .env file.")
             raise ValueError("Anthropic API key not found.  Please make sure ANTHROPIC_API_KEY is set in your .env file.")
         return ChatAnthropic(model=model_name, api_key=api_key)
     elif model_provider == ModelProvider.DEEPSEEK:
         api_key = os.getenv("DEEPSEEK_API_KEY")
         if not api_key:
-            print(f"API Key Error: Please make sure DEEPSEEK_API_KEY is set in your .env file.")
+            print("API Key Error: Please make sure DEEPSEEK_API_KEY is set in your .env file.")
             raise ValueError("DeepSeek API key not found.  Please make sure DEEPSEEK_API_KEY is set in your .env file.")
         return ChatDeepSeek(model=model_name, api_key=api_key)
     elif model_provider == ModelProvider.GEMINI:
         api_key = os.getenv("GOOGLE_API_KEY")
         if not api_key:
-            print(f"API Key Error: Please make sure GOOGLE_API_KEY is set in your .env file.")
+            print("API Key Error: Please make sure GOOGLE_API_KEY is set in your .env file.")
             raise ValueError("Google API key not found.  Please make sure GOOGLE_API_KEY is set in your .env file.")
         return ChatGoogleGenerativeAI(model=model_name, api_key=api_key)
     elif model_provider == ModelProvider.OLLAMA:
@@ -148,3 +152,9 @@ def get_model(model_name: str, model_provider: ModelProvider) -> ChatOpenAI | Ch
             model=model_name,
             base_url=base_url,
         )
+
+    # No implicit None: returning it here produced an AttributeError on
+    # `.with_structured_output` three frames away, which is much harder to read
+    # than naming the unsupported provider.
+    supported = ", ".join(provider.value for provider in ModelProvider)
+    raise ValueError(f"Unsupported model provider: {model_provider!r}. Supported providers: {supported}.")

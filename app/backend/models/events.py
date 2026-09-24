@@ -7,6 +7,9 @@ class BaseEvent(BaseModel):
     """Base class for all Server-Sent Event events"""
 
     type: str
+    # Every event carries the run it belongs to, so a client can filter and
+    # correlate. Without it two concurrent runs were indistinguishable.
+    run_id: Optional[str] = None
 
     def to_sse(self) -> str:
         """Convert to Server-Sent Event format"""

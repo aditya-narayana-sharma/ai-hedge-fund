@@ -1,11 +1,8 @@
-import {
-  ArrowDownToLine,
-  ArrowUpFromLine,
-  Bot,
-  LucideIcon,
-  Type
-} from 'lucide-react';
-import { agents } from './agents';
+import { ArrowDownToLine, ArrowUpFromLine, Bot, LucideIcon, ShieldCheck, Type } from 'lucide-react';
+
+import { AgentItem } from '@/services/types';
+
+import { ALWAYS_ON_STAGES } from './node-mappings';
 
 // Define component items by group
 export interface ComponentItem {
@@ -20,51 +17,39 @@ export interface ComponentGroup {
   items: ComponentItem[];
 }
 
-// Define all component groups and items
-export const componentGroups: ComponentGroup[] = [
-  {
-    name: "agents",
-    icon: Bot,
-    iconColor: "text-red-400",
-    items: agents.map(agent => ({
-      name: agent.display_name,
-      icon: Bot
-    }))
-  },
-  {
-    name: "inputs",
-    icon: ArrowDownToLine,
-    iconColor: "text-blue-400",
-    items: [
-      // { name: "Chat Input", icon: MessageSquare },
-      { name: "Text Input", icon: Type },
-      // { name: "File Input", icon: FileText }
-    ]
-  },
+/**
+ * Build the sidebar from the agent catalog served by the backend.
+ *
+ * This used to be a module-level constant built from a hand-copied
+ * src/data/agents.ts, so adding a Python agent never reached the UI.
+ */
+export function buildComponentGroups(agents: AgentItem[]): ComponentGroup[] {
+  return [
     {
-      name: "outputs",
-      icon: ArrowUpFromLine,
-      iconColor: "text-green-400",
-      items: [
-        { name: "Text Output", icon: Type },
-      ]
+      name: 'agents',
+      icon: Bot,
+      iconColor: 'text-red-400',
+      items: agents.map((agent) => ({ name: agent.display_name, icon: Bot })),
     },
-  // {
-  //   name: "data",
-  //   icon: Database,
-  //   iconColor: "text-yellow-400",
-  //   items: [
-  //     { name: "Data Store", icon: Database },
-  //     { name: "Vector Store", icon: LinkIcon }
-  //   ]
-  // },
-  // {
-  //   name: "processing",
-  //   icon: Zap,
-  //   iconColor: "text-purple-400",
-  //   items: [
-  //     { name: "Code Processor", icon: Code },
-  //     { name: "Function", icon: Zap }
-  //   ]
-  // },
-]; 
+    {
+      // The backend appends both stages to every graph; putting them on the
+      // canvas is what makes their progress visible.
+      name: 'stages',
+      icon: ShieldCheck,
+      iconColor: 'text-orange-400',
+      items: ALWAYS_ON_STAGES.map((stage) => ({ name: stage.display_name, icon: ShieldCheck })),
+    },
+    {
+      name: 'inputs',
+      icon: ArrowDownToLine,
+      iconColor: 'text-blue-400',
+      items: [{ name: 'Text Input', icon: Type }],
+    },
+    {
+      name: 'outputs',
+      icon: ArrowUpFromLine,
+      iconColor: 'text-green-400',
+      items: [{ name: 'Text Output', icon: Type }],
+    },
+  ];
+}

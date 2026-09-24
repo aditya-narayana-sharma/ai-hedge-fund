@@ -10,7 +10,7 @@ import questionary
 import requests
 from colorama import Fore, Style
 
-from . import docker
+from . import ollama_remote
 
 # Constants
 OLLAMA_SERVER_URL = "http://localhost:11434"
@@ -303,7 +303,7 @@ def ensure_ollama_and_model(model_name: str) -> bool:
     # In Docker environment, we need a different approach
     if in_docker:
         ollama_url = os.environ.get("OLLAMA_BASE_URL", "http://ollama:11434")
-        return docker.ensure_ollama_and_model(model_name, ollama_url)
+        return ollama_remote.ensure_ollama_and_model(model_name, ollama_url)
 
     # Regular flow for non-Docker environments
     # Check if Ollama is installed
@@ -350,10 +350,10 @@ def delete_model(model_name: str) -> bool:
     # Check if we're running in Docker
     in_docker = os.environ.get("OLLAMA_BASE_URL", "").startswith("http://ollama:") or os.environ.get("OLLAMA_BASE_URL", "").startswith("http://host.docker.internal:")
 
-    # In Docker environment, delegate to docker module
+    # Remote Ollama: drive the REST API instead of the local binary.
     if in_docker:
         ollama_url = os.environ.get("OLLAMA_BASE_URL", "http://ollama:11434")
-        return docker.delete_model(model_name, ollama_url)
+        return ollama_remote.delete_model(model_name, ollama_url)
 
     # Non-Docker environment
     if not is_ollama_server_running():

@@ -15,75 +15,91 @@ from src.agents.technicals import technical_analyst_agent
 from src.agents.valuation import valuation_agent
 from src.agents.warren_buffett import warren_buffett_agent
 
-# Define analyst configuration - single source of truth
+# Define analyst configuration - single source of truth.
+# `description` lives here rather than only in the frontend so GET /agents can
+# serve it and the UI no longer has to re-declare the catalog by hand.
 ANALYST_CONFIG = {
     "aswath_damodaran": {
         "display_name": "Aswath Damodaran",
+        "description": "The Dean of Valuation",
         "agent_func": aswath_damodaran_agent,
         "order": 0,
     },
     "ben_graham": {
         "display_name": "Ben Graham",
+        "description": "The Father of Value Investing",
         "agent_func": ben_graham_agent,
         "order": 1,
     },
     "bill_ackman": {
         "display_name": "Bill Ackman",
+        "description": "The Activist Investor",
         "agent_func": bill_ackman_agent,
         "order": 2,
     },
     "cathie_wood": {
         "display_name": "Cathie Wood",
+        "description": "The Queen of Growth Investing",
         "agent_func": cathie_wood_agent,
         "order": 3,
     },
     "charlie_munger": {
         "display_name": "Charlie Munger",
+        "description": "The Rational Thinker",
         "agent_func": charlie_munger_agent,
         "order": 4,
     },
     "michael_burry": {
         "display_name": "Michael Burry",
+        "description": "The Big Short Contrarian",
         "agent_func": michael_burry_agent,
         "order": 5,
     },
     "peter_lynch": {
         "display_name": "Peter Lynch",
+        "description": "The 10-Bagger Investor",
         "agent_func": peter_lynch_agent,
         "order": 6,
     },
     "phil_fisher": {
         "display_name": "Phil Fisher",
+        "description": "The Scuttlebutt Investor",
         "agent_func": phil_fisher_agent,
         "order": 7,
     },
     "stanley_druckenmiller": {
         "display_name": "Stanley Druckenmiller",
+        "description": "The Macro Investor",
         "agent_func": stanley_druckenmiller_agent,
         "order": 8,
     },
     "warren_buffett": {
         "display_name": "Warren Buffett",
+        "description": "The Oracle of Omaha",
         "agent_func": warren_buffett_agent,
         "order": 9,
     },
     "technical_analyst": {
         "display_name": "Technical Analyst",
+        "description": "Chart Pattern Specialist",
         "agent_func": technical_analyst_agent,
         "order": 10,
     },
     "fundamentals_analyst": {
         "display_name": "Fundamentals Analyst",
+        "description": "Financial Statement Specialist",
         "agent_func": fundamentals_agent,
         "order": 11,
     },
     "sentiment_analyst": {
         "display_name": "Sentiment Analyst",
+        "description": "Market Sentiment Specialist",
         "agent_func": sentiment_agent,
         "order": 12,
     },
     "valuation_analyst": {
         "display_name": "Valuation Analyst",
+        "description": "Company Valuation Specialist",
         "agent_func": valuation_agent,
         "order": 13,
     },
