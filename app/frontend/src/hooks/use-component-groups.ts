@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 
 export function useComponentGroups(componentGroups: ComponentGroup[]) {
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeItem, setActiveItem] = useState<string | null>('Chat Input');
+  const [activeItem, setActiveItem] = useState<string | null>(null);
   const [openGroups, setOpenGroups] = useState<string[]>([]); // Start with all groups collapsed
   const [isSearching, setIsSearching] = useState(false);
 
@@ -37,8 +37,7 @@ export function useComponentGroups(componentGroups: ComponentGroup[]) {
       setIsSearching(true);
       // Open all groups that have matching items
       setOpenGroups(filteredGroups.map(group => group.name));
-    } else if (isSearching) {
-      // Only reset groups when exiting search mode
+    } else {
       setIsSearching(false);
     }
   }, [searchQuery, filteredGroups]);

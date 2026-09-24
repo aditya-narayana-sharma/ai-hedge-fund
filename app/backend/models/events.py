@@ -6,6 +6,8 @@ class BaseEvent(BaseModel):
     """Base class for all Server-Sent Event events"""
 
     type: str
+    # Set on every event so a client can tell whose run it is watching.
+    run_id: Optional[str] = None
 
     def to_sse(self) -> str:
         """Convert to Server-Sent Event format"""
@@ -41,4 +43,14 @@ class CompleteEvent(BaseEvent):
 
     type: Literal["complete"] = "complete"
     data: Dict[str, Any]
+    timestamp: Optional[str] = None
+
+
+class BacktestDayEvent(BaseEvent):
+    """Event carrying one simulated trading day's result"""
+
+    type: Literal["backtest_day"] = "backtest_day"
+    date: str
+    portfolio_value: float
+    return_pct: float
     timestamp: Optional[str] = None

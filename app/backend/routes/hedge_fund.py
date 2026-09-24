@@ -27,17 +27,19 @@ async def run_hedge_fund(request: HedgeFundRequest):
         # Create the portfolio
         portfolio = create_portfolio(request.initial_cash, request.margin_requirement, request.tickers)
 
-        # Construct agent graph
-        graph = create_graph(request.selected_agents)
-        graph = graph.compile()
-
-        # Log a test progress update for debugging
-        progress.update_status("system", None, "Preparing hedge fund run")
+        # Construct agent graph. An empty or unknown selection is a client
+        # error, not an empty-signals 200.
+        try:
+            graph = create_graph(request.selected_agents).compile()
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
         # Convert model_provider to string if it's an enum
         model_provider = request.model_provider
         if hasattr(model_provider, "value"):
             model_provider = model_provider.value
+
+        run_id = request.run_id
 
         # Set up streaming response
         async def event_generator():
@@ -46,13 +48,16 @@ async def run_hedge_fund(request: HedgeFundRequest):
 
             # Simple handler to add updates to the queue
             def progress_handler(agent_name, ticker, status, timestamp):
-                event = ProgressUpdateEvent(agent=agent_name, ticker=ticker, status=status, timestamp=timestamp)
+                event = ProgressUpdateEvent(run_id=run_id, agent=agent_name, ticker=ticker, status=status, timestamp=timestamp)
                 progress_queue.put_nowait(event)
 
-            # Register our handler with the progress tracker
-            progress.register_handler(progress_handler)
+            # Register the handler against this run only, so two concurrent
+            # requests do not animate each other's agents.
+            progress.register_handler(progress_handler, run_id=run_id)
 
             try:
+                progress.update_status("system", None, "Preparing hedge fund run", run_id=run_id)
+
                 # Start the graph execution in a background task
                 run_task = asyncio.create_task(
                     run_graph_async(
@@ -63,10 +68,12 @@ async def run_hedge_fund(request: HedgeFundRequest):
                         end_date=request.end_date,
                         model_name=request.model_name,
                         model_provider=model_provider,
+                        run_id=run_id,
+                        position_limit_pct=request.position_limit_pct,
                     )
                 )
                 # Send initial message
-                yield StartEvent().to_sse()
+                yield StartEvent(run_id=run_id).to_sse()
 
                 # Stream progress updates until run_task completes
                 while not run_task.done():
@@ -78,25 +85,36 @@ async def run_hedge_fund(request: HedgeFundRequest):
                         # Just continue the loop
                         pass
 
-                # Get the final result
-                result = run_task.result()
+                # The 200 and the start event are already on the wire, so a
+                # failure here has to be reported in-band or the client just
+                # sees the stream stop.
+                try:
+                    result = run_task.result()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    yield ErrorEvent(run_id=run_id, message=f"{type(e).__name__}: {e}").to_sse()
+                    return
 
                 if not result or not result.get("messages"):
-                    yield ErrorEvent(message="Failed to generate hedge fund decisions").to_sse()
+                    yield ErrorEvent(run_id=run_id, message="Failed to generate hedge fund decisions").to_sse()
                     return
 
                 # Send the final result
                 final_data = CompleteEvent(
+                    run_id=run_id,
                     data={
+                        "run_id": run_id,
                         "decisions": parse_hedge_fund_response(result.get("messages", [])[-1].content),
                         "analyst_signals": result.get("data", {}).get("analyst_signals", {}),
-                    }
+                    },
                 )
                 yield final_data.to_sse()
 
             finally:
                 # Clean up
-                progress.unregister_handler(progress_handler)
+                progress.unregister_handler(progress_handler, run_id=run_id)
+                progress.clear_run(run_id)
                 if "run_task" in locals() and not run_task.done():
                     run_task.cancel()
 

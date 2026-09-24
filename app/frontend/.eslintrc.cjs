@@ -12,7 +12,19 @@ module.exports = {
   rules: {
     'react-refresh/only-export-components': [
       'warn',
-      { allowConstantExport: true },
+      {
+        allowConstantExport: true,
+        // cva variant builders and context hooks live alongside their
+        // components by convention (shadcn/ui, React context). Colocating
+        // them costs fast refresh granularity, not correctness.
+        allowExportNames: [
+          'badgeVariants',
+          'buttonVariants',
+          'useSidebar',
+          'useFlowContext',
+          'useNodeContext',
+        ],
+      },
     ],
   },
 }

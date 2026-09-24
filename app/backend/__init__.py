@@ -1,8 +1,7 @@
-import sys
-from pathlib import Path
+"""FastAPI backend for the AI hedge fund.
 
-# Add the src directory to Python path for imports
-# This is a temporary solution while we develop the backend
-src_path = str(Path(__file__).parent.parent.parent / "src")
-if src_path not in sys.path:
-    sys.path.append(src_path)
+Imports use the ``src.*`` and ``app.backend.*`` package paths, which resolve
+from the repository root. Run the server with
+``uvicorn app.backend.main:app --reload`` from the root rather than from this
+directory.
+"""

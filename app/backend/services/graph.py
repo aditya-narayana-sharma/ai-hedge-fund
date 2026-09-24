@@ -1,23 +1,43 @@
 import asyncio
 import json
+from contextlib import contextmanager
+
 from langchain_core.messages import HumanMessage
 from langgraph.graph import END, StateGraph
 
 from src.agents.portfolio_manager import portfolio_management_agent
-from src.agents.risk_manager import risk_management_agent
+from src.agents.risk_manager import DEFAULT_POSITION_LIMIT_PCT, risk_management_agent
 from src.main import start
 from src.utils.analysts import ANALYST_CONFIG
 from src.graph.state import AgentState
+from src.utils.progress import progress
+
+
+def validate_selected_agents(selected_agents: list[str]) -> list[str]:
+    """Reject an empty or unknown agent list instead of silently dropping it.
+
+    Filtering quietly produced a graph of just the risk and portfolio managers,
+    and a 200 with empty analyst_signals — indistinguishable from every
+    analyst having returned neutral.
+    """
+    if not selected_agents:
+        raise ValueError(f"selected_agents must name at least one analyst. Available: {', '.join(sorted(ANALYST_CONFIG))}")
+
+    unknown = [agent for agent in selected_agents if agent not in ANALYST_CONFIG]
+    if unknown:
+        raise ValueError(f"Unknown analyst(s): {', '.join(unknown)}. Available: {', '.join(sorted(ANALYST_CONFIG))}")
+
+    # Preserve order while dropping duplicates.
+    return list(dict.fromkeys(selected_agents))
 
 
 # Helper function to create the agent graph
 def create_graph(selected_agents: list[str]) -> StateGraph:
     """Create the workflow with selected agents."""
+    selected_agents = validate_selected_agents(selected_agents)
+
     graph = StateGraph(AgentState)
     graph.add_node("start_node", start)
-
-    # Filter out any agents that are not in analyst.py
-    selected_agents = [agent for agent in selected_agents if agent in ANALYST_CONFIG]
 
     # Get analyst nodes from the configuration
     analyst_nodes = {key: (f"{key}_agent", config["agent_func"]) for key, config in ANALYST_CONFIG.items()}
@@ -48,12 +68,12 @@ def create_graph(selected_agents: list[str]) -> StateGraph:
     return graph
 
 
-async def run_graph_async(graph, portfolio, tickers, start_date, end_date, model_name, model_provider):
+async def run_graph_async(graph, portfolio, tickers, start_date, end_date, model_name, model_provider, run_id=None, position_limit_pct=DEFAULT_POSITION_LIMIT_PCT):
     """Async wrapper for run_graph to work with asyncio."""
     # Use run_in_executor to run the synchronous function in a separate thread
     # so it doesn't block the event loop
     loop = asyncio.get_running_loop()
-    result = await loop.run_in_executor(None, lambda: run_graph(graph, portfolio, tickers, start_date, end_date, model_name, model_provider))  # Use default executor
+    result = await loop.run_in_executor(None, lambda: run_graph(graph, portfolio, tickers, start_date, end_date, model_name, model_provider, run_id, position_limit_pct))  # Use default executor
     return result
 
 
@@ -65,33 +85,49 @@ def run_graph(
     end_date: str,
     model_name: str,
     model_provider: str,
+    run_id: str | None = None,
+    position_limit_pct: float = DEFAULT_POSITION_LIMIT_PCT,
 ) -> dict:
     """
     Run the graph with the given portfolio, tickers,
     start date, end date, show reasoning, model name,
     and model provider.
     """
-    return graph.invoke(
-        {
-            "messages": [
-                HumanMessage(
-                    content="Make trading decisions based on the provided data.",
-                )
-            ],
-            "data": {
-                "tickers": tickers,
-                "portfolio": portfolio,
-                "start_date": start_date,
-                "end_date": end_date,
-                "analyst_signals": {},
+    # The executor thread does not inherit the request's context, so the run
+    # scope is entered here rather than at the call site.
+    with _run_scope(run_id):
+        return graph.invoke(
+            {
+                "messages": [
+                    HumanMessage(
+                        content="Make trading decisions based on the provided data.",
+                    )
+                ],
+                "data": {
+                    "tickers": tickers,
+                    "portfolio": portfolio,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    "analyst_signals": {},
+                },
+                "metadata": {
+                    "show_reasoning": False,
+                    "model_name": model_name,
+                    "model_provider": model_provider,
+                    "run_id": run_id,
+                    "position_limit_pct": position_limit_pct,
+                },
             },
-            "metadata": {
-                "show_reasoning": False,
-                "model_name": model_name,
-                "model_provider": model_provider,
-            },
-        },
-    )
+        )
+
+
+@contextmanager
+def _run_scope(run_id: str | None):
+    if run_id is None:
+        yield
+        return
+    with progress.run_scope(run_id):
+        yield
 
 
 def parse_hedge_fund_response(response):
