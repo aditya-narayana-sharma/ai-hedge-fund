@@ -1,6 +1,11 @@
 import { NodeStatus, OutputNodeData, useNodeContext } from '@/contexts/node-context';
 import { ModelProvider } from '@/services/types';
 
+/** A cancelled fetch rejects with an AbortError; that is expected, not a failure. */
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError';
+}
+
 interface HedgeFundRequest {
   tickers: string[];
   selected_agents: string[];
@@ -61,7 +66,7 @@ export const api = {
       // Function to process the stream
       const processStream = async () => {
         try {
-          while (true) {
+          for (;;) {
             const { done, value } = await reader.read();
             
             if (done) {
@@ -140,8 +145,8 @@ export const api = {
               }
             }
           }
-        } catch (error: any) { // Type assertion for error
-          if (error.name !== 'AbortError') {
+        } catch (error: unknown) {
+          if (!isAbortError(error)) {
             console.error('Error reading SSE stream:', error);
             // Mark all agents as error when there's a connection error
             const agentIds = params.selected_agents || [];
@@ -153,8 +158,8 @@ export const api = {
       // Start processing the stream
       processStream();
     })
-    .catch((error: any) => { // Type assertion for error
-      if (error.name !== 'AbortError') {
+    .catch((error: unknown) => {
+      if (!isAbortError(error)) {
         console.error('SSE connection error:', error);
         // Mark all agents as error when there's a connection error
         const agentIds = params.selected_agents || [];

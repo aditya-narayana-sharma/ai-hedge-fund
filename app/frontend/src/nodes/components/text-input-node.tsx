@@ -84,7 +84,7 @@ export function TextInputNode({
         tickers: tickerList,
         selected_agents: Array.from(selectedAgents),
         model_name: selectedModel?.model_name || undefined,
-        model_provider: selectedModel?.provider as any || undefined,
+        model_provider: selectedModel?.provider || undefined,
       },
       // Pass the node status context to the API
       nodeContext

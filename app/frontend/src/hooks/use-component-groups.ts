@@ -3,9 +3,10 @@ import { useEffect, useMemo, useState } from 'react';
 
 export function useComponentGroups(componentGroups: ComponentGroup[]) {
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeItem, setActiveItem] = useState<string | null>('Chat Input');
+  const [activeItem, setActiveItem] = useState<string | null>(null);
   const [openGroups, setOpenGroups] = useState<string[]>([]); // Start with all groups collapsed
-  const [isSearching, setIsSearching] = useState(false);
+
+  const isSearching = searchQuery.length > 0;
 
   // Filter groups and items based on search query
   const filteredGroups = useMemo(() => {
@@ -31,16 +32,10 @@ export function useComponentGroups(componentGroups: ComponentGroup[]) {
     // Additional logic for handling component selection could go here
   };
 
-  // Handle search query changes
+  // Expand every group that still has a match while a search is active.
   useEffect(() => {
-    if (searchQuery) {
-      setIsSearching(true);
-      // Open all groups that have matching items
-      setOpenGroups(filteredGroups.map(group => group.name));
-    } else if (isSearching) {
-      // Only reset groups when exiting search mode
-      setIsSearching(false);
-    }
+    if (!searchQuery) return;
+    setOpenGroups(filteredGroups.map(group => group.name));
   }, [searchQuery, filteredGroups]);
 
   // Handle accordion value changes

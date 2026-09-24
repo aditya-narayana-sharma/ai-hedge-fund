@@ -1,5 +1,7 @@
 import { createContext, ReactNode, useCallback, useContext, useState } from 'react';
 
+import { HedgeFundResult } from '@/services/types';
+
 export type NodeStatus = 'IDLE' | 'IN_PROGRESS' | 'COMPLETE' | 'ERROR';
 
 // Message history item
@@ -20,10 +22,7 @@ export interface AgentNodeData {
 }
 
 // Data structure for the output node data (from complete event)
-export interface OutputNodeData {
-  decisions: Record<string, any>;
-  analyst_signals: Record<string, any>;
-}
+export type OutputNodeData = HedgeFundResult;
 
 // Default agent node state
 const DEFAULT_AGENT_NODE_STATE: AgentNodeData = {
