@@ -53,11 +53,9 @@ FINANCIAL_DATASETS_API_KEY=your-financial-datasets-api-key
 To run the development server:
 
 ```bash
-# Navigate to the backend directory
-cd app/backend
-
-# Start the FastAPI server with uvicorn
-poetry run uvicorn main:app --reload
+# From the repository root, not from app/backend: main.py imports
+# app.backend.routes, which only resolves with the root on sys.path.
+poetry run uvicorn app.backend.main:app --reload
 ```
 
 This will start the FastAPI server with hot-reloading enabled.
@@ -68,27 +66,41 @@ The API will be available at:
 
 ## API Endpoints
 
-- `POST /hedge-fund/run`: Run the AI Hedge Fund with specified parameters
-- `GET /ping`: Simple endpoint to test server connectivity
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/` | Welcome message |
+| `GET` | `/ping` | Server-Sent Event keepalive, for testing connectivity |
+| `GET` | `/agents` | The analyst catalog, from `src/utils/analysts.py` |
+| `GET` | `/models` | The model catalog, cloud and Ollama |
+| `POST` | `/hedge-fund/run` | Run the hedge fund, streaming progress as SSE |
+| `POST` | `/backtest/run` | Run a backtest, streaming one event per simulated day |
+
+Both `POST` endpoints stream `start`, `progress`, `complete` and `error`
+events; `/backtest/run` also streams `backtest_day`. Every event carries the
+request's `run_id`. An empty or unknown `selected_agents` list returns `400`.
 
 ## Project Structure
 
 ```
 app/backend/
-├── api/                      # API layer (future expansion)
 ├── models/                   # Domain models
 │   ├── __init__.py
-│   └── schemas.py            # Pydantic schema definitions
+│   ├── events.py             # Server-Sent Event payloads
+│   └── schemas.py            # Pydantic request and response schemas
 ├── routes/                   # API routes
 │   ├── __init__.py           # Router registry
+│   ├── backtest.py           # Backtest endpoint
+│   ├── catalog.py            # Agent and model catalogs
 │   ├── hedge_fund.py         # Hedge fund endpoints
 │   └── health.py             # Health check endpoints
 ├── services/                 # Business logic
-│   ├── graph.py              # Agent graph functionality
-│   └── portfolio.py          # Portfolio management
+│   ├── graph.py              # Agent graph assembly and execution
+│   └── portfolio.py          # Portfolio construction
 ├── __init__.py               # Package initialization
 └── main.py                   # FastAPI application entry point
 ```
+
+`routes/` is the API layer; there is no separate `api/` package.
 
 ## Disclaimer
 

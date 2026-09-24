@@ -79,9 +79,10 @@ npm install  # or pnpm install or yarn install
 
 1. Start the backend server:
 ```bash
-# In one terminal, from the backend directory
-cd app/backend
-poetry run uvicorn main:app --reload
+# In one terminal, from the repository root.
+# Run from the root, not from app/backend: main.py imports app.backend.routes,
+# which only resolves with the root on sys.path.
+poetry run uvicorn app.backend.main:app --reload
 ```
 
 2. Start the frontend application:

@@ -232,29 +232,33 @@ run.bat --ticker AAPL,MSFT,NVDA --ollama backtest
 ```
 
 
-## Project Structure 
+## Project Structure
+
+See [`ARCHITECTURE.md`](ARCHITECTURE.md) for how these pieces fit together.
+
 ```
 ai-hedge-fund/
-├── src/
-│   ├── agents/                   # Agent definitions and workflow
-│   │   ├── bill_ackman.py        # Bill Ackman agent
-│   │   ├── fundamentals.py       # Fundamental analysis agent
-│   │   ├── portfolio_manager.py  # Portfolio management agent
-│   │   ├── risk_manager.py       # Risk management agent
-│   │   ├── sentiment.py          # Sentiment analysis agent
-│   │   ├── technicals.py         # Technical analysis agent
-│   │   ├── valuation.py          # Valuation analysis agent
-│   │   ├── ...                   # Other agents
-│   │   ├── warren_buffett.py     # Warren Buffett agent
-│   │   ├── aswath_damodaran.py   # Aswath Damodaran agent
-│   │   ├── ...                   # Other agents
-│   │   ├── ...                   # Other agents
-│   ├── tools/                    # Agent tools
-│   │   ├── api.py                # API tools
-│   ├── backtester.py             # Backtesting tools
-│   ├── main.py # Main entry point
-├── pyproject.toml
-├── ...
+├── src/                          # The engine
+│   ├── agents/                   # 14 analysts plus risk and portfolio managers
+│   │   ├── warren_buffett.py     # ... one module per investing philosophy
+│   │   ├── fundamentals.py       # Deterministic quant agents: no LLM call
+│   │   ├── risk_manager.py       # Position sizing against net liquidation value
+│   │   └── portfolio_manager.py  # Final buy/sell/short/cover orders
+│   ├── data/                     # Cache, Pydantic models, Portfolio model
+│   ├── graph/                    # LangGraph state and reducers
+│   ├── llm/                      # Provider clients and the model catalogs
+│   ├── tools/api.py              # financialdatasets.ai client
+│   ├── utils/                    # Analyst catalog, progress, display, Ollama
+│   ├── backtester.py             # Day-by-day simulation and metrics
+│   └── main.py                   # CLI entry point
+├── app/
+│   ├── backend/                  # FastAPI wrapper over the engine (SSE)
+│   └── frontend/                 # React Flow canvas
+├── tests/                        # pytest suite
+├── .github/workflows/ci.yml      # Lint, type check, test, build
+├── docker-compose.yml            # Ollama, backend, frontend and CLI services
+├── run.sh / run.bat              # Docker entry points
+└── pyproject.toml
 ```
 
 ## Contributing
