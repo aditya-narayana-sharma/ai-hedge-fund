@@ -162,9 +162,11 @@ if __name__ == "__main__":
     # Parse tickers from comma-separated string
     tickers = [ticker.strip() for ticker in args.tickers.split(",")]
 
-    selected_analysts = resolve_selected_analysts(args.analysts, args.analysts_all)
-
-    model_name, model_provider = resolve_model(args)
+    try:
+        selected_analysts = resolve_selected_analysts(args.analysts, args.analysts_all)
+        model_name, model_provider = resolve_model(args)
+    except (ValueError, RuntimeError) as e:
+        parser.error(str(e))
 
     # Create the workflow with selected analysts
     workflow = create_workflow(selected_analysts)

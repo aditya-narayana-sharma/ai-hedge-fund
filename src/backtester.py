@@ -673,7 +673,8 @@ if __name__ == "__main__":
         "--margin-requirement",
         type=float,
         default=0.0,
-        help="Margin ratio for short positions, e.g. 0.5 for 50% (default: 0.0)",
+        # argparse runs help strings through %-formatting, so % must be escaped.
+        help="Margin ratio for short positions, e.g. 0.5 for 50%% (default: 0.0)",
     )
     parser.add_argument(
         "--chart-output",
@@ -690,8 +691,11 @@ if __name__ == "__main__":
     if not tickers:
         parser.error("--tickers must name at least one ticker")
 
-    selected_analysts = resolve_selected_analysts(args.analysts, args.analysts_all)
-    model_name, model_provider = resolve_model(args)
+    try:
+        selected_analysts = resolve_selected_analysts(args.analysts, args.analysts_all)
+        model_name, model_provider = resolve_model(args)
+    except (ValueError, RuntimeError) as e:
+        parser.error(str(e))
 
     # Create and run the backtester
     backtester = Backtester(
