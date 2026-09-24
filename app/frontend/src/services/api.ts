@@ -4,6 +4,7 @@ import { API_BASE_URL } from './config';
 import {
   BacktestDayEventData,
   BacktestRequest,
+  BacktestResult,
   CompleteEventData,
   ErrorEventData,
   HedgeFundRequest,
@@ -154,6 +155,38 @@ export const api = {
   },
 
   /** Runs a backtest, streaming one event per simulated trading day. */
-  runBacktest: (params: BacktestRequest, handlers: RunStreamHandlers): (() => void) =>
-    streamRun('/backtest/run', params, handlers),
+  runBacktest: (
+    params: BacktestRequest,
+    nodeContext: ReturnType<typeof useNodeContext>
+  ): (() => void) => {
+    const statusKeys = () => params.selected_agents.map(key => `${key}_agent`);
+
+    return streamRun('/backtest/run', params, {
+      onStart: () => nodeContext.resetAllNodes(),
+      onProgress: event => {
+        if (!event.agent) return;
+        const status: NodeStatus = event.status === 'Done' ? 'COMPLETE' : 'IN_PROGRESS';
+        nodeContext.updateAgentNode(event.agent, {
+          status,
+          ticker: event.ticker ?? null,
+          message: event.status,
+          timestamp: event.timestamp ?? undefined,
+        });
+      },
+      onBacktestDay: day => nodeContext.appendBacktestDay(day),
+      onComplete: event => {
+        nodeContext.setBacktestResult(event.data as unknown as BacktestResult);
+        nodeContext.updateAgentNodes(statusKeys(), 'COMPLETE');
+        nodeContext.updateAgentNode(OUTPUT_NODE_ID, {
+          status: 'COMPLETE',
+          message: 'Backtest complete',
+        });
+      },
+      onError: message => {
+        nodeContext.setRunError(message);
+        nodeContext.updateAgentNodes(statusKeys(), 'ERROR');
+        nodeContext.updateAgentNode(OUTPUT_NODE_ID, { status: 'ERROR', message });
+      },
+    });
+  },
 };

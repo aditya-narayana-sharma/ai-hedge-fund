@@ -234,3 +234,10 @@
   background-size: 200% 100%;
   animation: gradientFlow 3s linear infinite;
 }
+
+/* Marching-ants dash for edges feeding an agent that is currently running */
+@keyframes dash {
+  to {
+    stroke-dashoffset: -10;
+  }
+}

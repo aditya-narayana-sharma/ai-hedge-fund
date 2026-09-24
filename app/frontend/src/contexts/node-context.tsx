@@ -1,6 +1,6 @@
 import { createContext, ReactNode, useCallback, useContext, useState } from 'react';
 
-import { OutputNodeData } from '@/services/types';
+import { BacktestDayEventData, BacktestResult, OutputNodeData } from '@/services/types';
 
 export type NodeStatus = 'IDLE' | 'IN_PROGRESS' | 'COMPLETE' | 'ERROR';
 
@@ -35,11 +35,17 @@ const DEFAULT_AGENT_NODE_STATE: AgentNodeData = {
 interface NodeContextType {
   agentNodeData: Record<string, AgentNodeData>;
   outputNodeData: OutputNodeData | null;
+  /** Final metrics and equity curve from the last backtest. */
+  backtestResult: BacktestResult | null;
+  /** Days streamed so far, so the curve can be drawn while the run proceeds. */
+  backtestDays: BacktestDayEventData[];
   /** Message from the last failed run, so the canvas can say what went wrong. */
   runError: string | null;
   updateAgentNode: (nodeId: string, data: Partial<AgentNodeData> | NodeStatus) => void;
   updateAgentNodes: (nodeIds: string[], status: NodeStatus) => void;
   setOutputNodeData: (data: OutputNodeData) => void;
+  setBacktestResult: (result: BacktestResult) => void;
+  appendBacktestDay: (day: BacktestDayEventData) => void;
   setRunError: (message: string | null) => void;
   resetAllNodes: () => void;
 }
@@ -49,7 +55,13 @@ const NodeContext = createContext<NodeContextType | undefined>(undefined);
 export function NodeProvider({ children }: { children: ReactNode }) {
   const [agentNodeData, setAgentNodeData] = useState<Record<string, AgentNodeData>>({});
   const [outputNodeData, setOutputNodeData] = useState<OutputNodeData | null>(null);
+  const [backtestResult, setBacktestResult] = useState<BacktestResult | null>(null);
+  const [backtestDays, setBacktestDays] = useState<BacktestDayEventData[]>([]);
   const [runError, setRunError] = useState<string | null>(null);
+
+  const appendBacktestDay = useCallback((day: BacktestDayEventData) => {
+    setBacktestDays(prev => [...prev, day]);
+  }, []);
 
   const updateAgentNode = useCallback((nodeId: string, data: Partial<AgentNodeData> | NodeStatus) => {
     // Handle string status shorthand (just passing a status string)
@@ -115,6 +127,8 @@ export function NodeProvider({ children }: { children: ReactNode }) {
   const resetAllNodes = useCallback(() => {
     setAgentNodeData({});
     setOutputNodeData(null);
+    setBacktestResult(null);
+    setBacktestDays([]);
     setRunError(null);
   }, []);
 
@@ -123,10 +137,14 @@ export function NodeProvider({ children }: { children: ReactNode }) {
       value={{
         agentNodeData,
         outputNodeData,
+        backtestResult,
+        backtestDays,
         runError,
         updateAgentNode,
         updateAgentNodes,
         setOutputNodeData,
+        setBacktestResult,
+        appendBacktestDay,
         setRunError,
         resetAllNodes,
       }}

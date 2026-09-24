@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useCatalog } from '@/contexts/catalog-context';
 import { useNodeContext } from '@/contexts/node-context';
@@ -16,6 +17,9 @@ import { ModelItem } from '@/services/types';
 import { type AgentNode, type TextInputNode } from '../types';
 import { NodeShell } from './node-shell';
 
+/** Analyze runs one pass as of today; backtest replays a date range. */
+type RunMode = 'analyze' | 'backtest';
+
 export function TextInputNode({
   data,
   selected,
@@ -23,6 +27,9 @@ export function TextInputNode({
   isConnectable,
 }: NodeProps<TextInputNode>) {
   const [tickers, setTickers] = useState('');
+  const [mode, setMode] = useState<RunMode>('analyze');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
   const [selectedModel, setSelectedModel] = useState<ModelItem | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
   const nodeContext = useNodeContext();
@@ -99,22 +106,29 @@ export function TextInputNode({
       return;
     }
 
+    if (mode === 'backtest' && startDate && endDate && startDate > endDate) {
+      setValidationError('Start date must not be after end date.');
+      return;
+    }
+
     // Reset all nodes to IDLE, then clean up any existing connection
     resetAllNodes();
     if (abortControllerRef.current) {
       abortControllerRef.current();
     }
 
-    abortControllerRef.current = api.runHedgeFund(
-      {
-        tickers: tickerList,
-        selected_agents: selectedAgents,
-        model_name: selectedModel.model_name,
-        model_provider: selectedModel.provider,
-      },
-      // Pass the node status context to the API
-      nodeContext
-    );
+    const request = {
+      tickers: tickerList,
+      selected_agents: selectedAgents,
+      model_name: selectedModel.model_name,
+      model_provider: selectedModel.provider,
+      ...(startDate ? { start_date: startDate } : {}),
+      ...(endDate ? { end_date: endDate } : {}),
+    };
+
+    // Pass the node status context to the API
+    abortControllerRef.current =
+      mode === 'backtest' ? api.runBacktest(request, nodeContext) : api.runHedgeFund(request, nodeContext);
   };
 
   const errorMessage = validationError ?? runError ?? catalogError;
@@ -133,6 +147,13 @@ export function TextInputNode({
         <CardContent className="p-0">
           <div className="border-t border-border p-3">
             <div className="flex flex-col gap-4">
+              <Tabs value={mode} onValueChange={value => setMode(value as RunMode)}>
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger value="analyze" className="text-subtitle">Analyze</TabsTrigger>
+                  <TabsTrigger value="backtest" className="text-subtitle">Backtest</TabsTrigger>
+                </TabsList>
+              </Tabs>
+
               <div className="flex flex-col gap-2">
                 <div className="text-subtitle text-muted-foreground flex items-center gap-1">
                   <Tooltip delayDuration={200}>
@@ -165,6 +186,26 @@ export function TextInputNode({
                   </Button>
                 </div>
               </div>
+              {mode === 'backtest' && (
+                <div className="flex flex-col gap-2">
+                  <div className="text-subtitle text-muted-foreground">Date range</div>
+                  <div className="flex gap-2">
+                    <Input
+                      type="date"
+                      aria-label="Start date"
+                      value={startDate}
+                      onChange={e => setStartDate(e.target.value)}
+                    />
+                    <Input
+                      type="date"
+                      aria-label="End date"
+                      value={endDate}
+                      onChange={e => setEndDate(e.target.value)}
+                    />
+                  </div>
+                </div>
+              )}
+
               <div className="flex flex-col gap-2">
                 <div className="text-subtitle text-muted-foreground flex items-center gap-1">
                   Model

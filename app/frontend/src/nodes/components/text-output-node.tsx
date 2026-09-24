@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { CardContent } from '@/components/ui/card';
 import { useNodeContext } from '@/contexts/node-context';
 import { type TextOutputNode } from '../types';
+import { BacktestDialog } from './backtest-dialog';
 import { NodeShell } from './node-shell';
 import { TextOutputDialog } from './text-output-dialog';
 
@@ -15,15 +16,16 @@ export function TextOutputNode({
   id,
   isConnectable,
 }: NodeProps<TextOutputNode>) {  
-  const { outputNodeData, agentNodeData } = useNodeContext();
+  const { outputNodeData, backtestResult, backtestDays, agentNodeData } = useNodeContext();
   const [showOutput, setShowOutput] = useState(false);
   
   // Check if any agent is in progress
   const isProcessing = Object.values(agentNodeData).some(
     agent => agent.status === 'IN_PROGRESS'
   );
-  
-  const isOutputAvailable = !!outputNodeData;
+
+  const isBacktest = !!backtestResult || backtestDays.length > 0;
+  const isOutputAvailable = !!outputNodeData || isBacktest;
 
   const handleViewOutput = () => {
     setShowOutput(true);
@@ -72,11 +74,20 @@ export function TextOutputNode({
         </CardContent>
       </NodeShell>
 
-      <TextOutputDialog 
-        isOpen={showOutput} 
-        onOpenChange={setShowOutput} 
-        outputNodeData={outputNodeData} 
-      />
+      {isBacktest ? (
+        <BacktestDialog
+          isOpen={showOutput}
+          onOpenChange={setShowOutput}
+          result={backtestResult}
+          streamedDays={backtestDays}
+        />
+      ) : (
+        <TextOutputDialog
+          isOpen={showOutput}
+          onOpenChange={setShowOutput}
+          outputNodeData={outputNodeData}
+        />
+      )}
     </>
   );
 }
