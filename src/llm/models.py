@@ -29,23 +29,21 @@ class LLMModel(BaseModel):
     display_name: str
     model_name: str
     provider: ModelProvider
+    # Declared in the catalog JSON rather than inferred from the model name, so
+    # adding a model cannot silently inherit the wrong capability.
+    supports_json_mode: bool = True
 
     def to_choice_tuple(self) -> Tuple[str, str, str]:
         """Convert to format needed for questionary choices"""
         return (self.display_name, self.model_name, self.provider.value)
 
     def is_custom(self) -> bool:
-        """Check if the model is a Gemini model"""
+        """Check if this entry is the user-supplied custom model placeholder"""
         return self.model_name == "-"
 
     def has_json_mode(self) -> bool:
         """Check if the model supports JSON mode"""
-        if self.is_deepseek() or self.is_gemini():
-            return False
-        # Only certain Ollama models support JSON mode
-        if self.is_ollama():
-            return "llama3" in self.model_name or "neural-chat" in self.model_name
-        return True
+        return self.supports_json_mode
 
     def is_deepseek(self) -> bool:
         """Check if the model is a DeepSeek model"""
@@ -74,7 +72,8 @@ def load_models_from_json(json_path: str) -> List[LLMModel]:
             LLMModel(
                 display_name=model_data["display_name"],
                 model_name=model_data["model_name"],
-                provider=provider_enum
+                provider=provider_enum,
+                supports_json_mode=model_data.get("supports_json_mode", True),
             )
         )
     return models
@@ -104,7 +103,7 @@ def get_model_info(model_name: str, model_provider: str) -> LLMModel | None:
     return next((model for model in all_models if model.model_name == model_name and model.provider == model_provider), None)
 
 
-def get_model(model_name: str, model_provider: ModelProvider) -> ChatOpenAI | ChatGroq | ChatOllama | None:
+def get_model(model_name: str, model_provider: ModelProvider) -> ChatOpenAI | ChatGroq | ChatOllama:
     if model_provider == ModelProvider.GROQ:
         api_key = os.getenv("GROQ_API_KEY")
         if not api_key:
@@ -148,3 +147,6 @@ def get_model(model_name: str, model_provider: ModelProvider) -> ChatOpenAI | Ch
             model=model_name,
             base_url=base_url,
         )
+    # Returning None here would surface as an AttributeError on
+    # .with_structured_output further down the call stack.
+    raise ValueError(f"Unsupported model provider: {model_provider!r}. Supported providers: {', '.join(p.value for p in ModelProvider)}.")

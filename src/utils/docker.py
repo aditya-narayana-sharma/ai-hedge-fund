@@ -1,4 +1,11 @@
-"""Utilities for working with Ollama models in Docker environments"""
+"""Utilities for working with Ollama models in Docker environments.
+
+The container-side counterpart of ``src/utils/ollama.py``: when OLLAMA_BASE_URL
+points at a container, ``ollama.ensure_ollama_and_model`` and
+``ollama.delete_model`` delegate here. The signatures take an explicit
+``ollama_url`` because the daemon is remote and cannot be installed or started
+from this process.
+"""
 
 import requests
 import time

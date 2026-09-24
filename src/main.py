@@ -1,19 +1,17 @@
-import sys
-
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage
 from langgraph.graph import END, StateGraph
-from colorama import Fore, Style, init
-import questionary
+from colorama import init
+from langgraph.graph.state import CompiledStateGraph
+
 from src.agents.portfolio_manager import portfolio_management_agent
-from src.agents.risk_manager import risk_management_agent
+from src.agents.risk_manager import DEFAULT_POSITION_LIMIT_PCT, risk_management_agent
 from src.data.portfolio import create_portfolio
 from src.graph.state import AgentState
 from src.utils.display import print_trading_output
-from src.utils.analysts import ANALYST_ORDER, get_analyst_nodes
+from src.utils.analysts import add_analyst_arguments, get_analyst_nodes, resolve_selected_analysts
+from src.utils.model_selection import add_model_arguments, resolve_model
 from src.utils.progress import progress
-from src.llm.models import LLM_ORDER, OLLAMA_LLM_ORDER, get_model_info, ModelProvider
-from src.utils.ollama import ensure_ollama_and_model
 
 import argparse
 from datetime import datetime
@@ -49,20 +47,22 @@ def run_hedge_fund(
     end_date: str,
     portfolio: dict,
     show_reasoning: bool = False,
-    selected_analysts: list[str] = [],
+    selected_analysts: list[str] | None = None,
     model_name: str = "gpt-4o",
     model_provider: str = "OpenAI",
+    graph: CompiledStateGraph | None = None,
+    position_limit_pct: float = DEFAULT_POSITION_LIMIT_PCT,
 ):
+    """Run one hedge fund pass and return its decisions and analyst signals.
+
+    Pass ``graph`` to reuse an already-compiled workflow; otherwise one is
+    compiled from ``selected_analysts`` (all analysts when omitted).
+    """
     # Start progress tracking
     progress.start()
 
     try:
-        # Create a new workflow if analysts are customized
-        if selected_analysts:
-            workflow = create_workflow(selected_analysts)
-            agent = workflow.compile()
-        else:
-            agent = app
+        agent = graph if graph is not None else create_workflow(selected_analysts).compile()
 
         final_state = agent.invoke(
             {
@@ -82,6 +82,7 @@ def run_hedge_fund(
                     "show_reasoning": show_reasoning,
                     "model_name": model_name,
                     "model_provider": model_provider,
+                    "position_limit_pct": position_limit_pct,
                 },
             },
         )
@@ -146,100 +147,31 @@ if __name__ == "__main__":
     parser.add_argument("--end-date", type=str, help="End date (YYYY-MM-DD). Defaults to today")
     parser.add_argument("--show-reasoning", action="store_true", help="Show reasoning from each agent")
     parser.add_argument("--show-agent-graph", action="store_true", help="Show the agent graph")
-    parser.add_argument("--ollama", action="store_true", help="Use Ollama for local LLM inference")
+    parser.add_argument("--graph-output", type=str, help="Where to write the agent graph PNG. Implies --show-agent-graph")
+    parser.add_argument(
+        "--position-limit",
+        type=float,
+        default=DEFAULT_POSITION_LIMIT_PCT,
+        help=f"Maximum share of portfolio value in one ticker (default: {DEFAULT_POSITION_LIMIT_PCT})",
+    )
+    add_analyst_arguments(parser)
+    add_model_arguments(parser)
 
     args = parser.parse_args()
 
     # Parse tickers from comma-separated string
     tickers = [ticker.strip() for ticker in args.tickers.split(",")]
 
-    # Auto-select all analysts (bypassing interactive prompt)
-    selected_analysts = [value for _, value in ANALYST_ORDER]
-    print(f"\nAuto-selected analysts: {', '.join(Fore.GREEN + a.title().replace('_', ' ') + Style.RESET_ALL for a in selected_analysts)}\n")
+    selected_analysts = resolve_selected_analysts(args.analysts, args.analysts_all)
 
-    # Select LLM model based on whether Ollama is being used
-    model_name = ""
-    model_provider = ""
-
-    if args.ollama:
-        print(f"{Fore.CYAN}Using Ollama for local LLM inference.{Style.RESET_ALL}")
-
-        # Select from Ollama-specific models
-        model_name: str = questionary.select(
-            "Select your Ollama model:",
-            choices=[questionary.Choice(display, value=value) for display, value, _ in OLLAMA_LLM_ORDER],
-            style=questionary.Style(
-                [
-                    ("selected", "fg:green bold"),
-                    ("pointer", "fg:green bold"),
-                    ("highlighted", "fg:green"),
-                    ("answer", "fg:green bold"),
-                ]
-            ),
-        ).ask()
-
-        if not model_name:
-            print("\n\nInterrupt received. Exiting...")
-            sys.exit(0)
-
-        if model_name == "-":
-            model_name = questionary.text("Enter the custom model name:").ask()
-            if not model_name:
-                print("\n\nInterrupt received. Exiting...")
-                sys.exit(0)
-
-        # Ensure Ollama is installed, running, and the model is available
-        if not ensure_ollama_and_model(model_name):
-            print(f"{Fore.RED}Cannot proceed without Ollama and the selected model.{Style.RESET_ALL}")
-            sys.exit(1)
-
-        model_provider = ModelProvider.OLLAMA.value
-        print(f"\nSelected {Fore.CYAN}Ollama{Style.RESET_ALL} model: {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n")
-    else:
-        # Use the standard cloud-based LLM selection
-        model_choice = questionary.select(
-            "Select your LLM model:",
-            choices=[questionary.Choice(display, value=(name, provider)) for display, name, provider in LLM_ORDER],
-            style=questionary.Style(
-                [
-                    ("selected", "fg:green bold"),
-                    ("pointer", "fg:green bold"),
-                    ("highlighted", "fg:green"),
-                    ("answer", "fg:green bold"),
-                ]
-            ),
-        ).ask()
-
-        if not model_choice:
-            print("\n\nInterrupt received. Exiting...")
-            sys.exit(0)
-
-        model_name, model_provider = model_choice
-
-        # Get model info using the helper function
-        model_info = get_model_info(model_name, model_provider)
-        if model_info:
-            if model_info.is_custom():
-                model_name = questionary.text("Enter the custom model name:").ask()
-                if not model_name:
-                    print("\n\nInterrupt received. Exiting...")
-                    sys.exit(0)
-
-            print(f"\nSelected {Fore.CYAN}{model_provider}{Style.RESET_ALL} model: {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n")
-        else:
-            model_provider = "Unknown"
-            print(f"\nSelected model: {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n")
+    model_name, model_provider = resolve_model(args)
 
     # Create the workflow with selected analysts
     workflow = create_workflow(selected_analysts)
     app = workflow.compile()
 
-    if args.show_agent_graph:
-        file_path = ""
-        if selected_analysts is not None:
-            for selected_analyst in selected_analysts:
-                file_path += selected_analyst + "_"
-            file_path += "graph.png"
+    if args.show_agent_graph or args.graph_output:
+        file_path = args.graph_output or "_".join(selected_analysts) + "_graph.png"
         save_graph_as_png(app, file_path)
 
     # Validate dates if provided
@@ -277,5 +209,7 @@ if __name__ == "__main__":
         selected_analysts=selected_analysts,
         model_name=model_name,
         model_provider=model_provider,
+        graph=app,
+        position_limit_pct=args.position_limit,
     )
     print_trading_output(result)

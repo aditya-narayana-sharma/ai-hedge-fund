@@ -1,3 +1,4 @@
+from typing import Any
 from typing_extensions import Annotated, Sequence, TypedDict
 
 import operator
@@ -7,15 +8,30 @@ from langchain_core.messages import BaseMessage
 import json
 
 
-def merge_dicts(a: dict[str, any], b: dict[str, any]) -> dict[str, any]:
-    return {**a, **b}
+def merge_dicts(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
+    """Merge two state updates, recursing into nested dicts.
+
+    A shallow merge would drop analyst signals whenever two parallel branches
+    both returned ``data``: the later branch's ``analyst_signals`` key would
+    replace the earlier one wholesale. That is invisible today only because
+    every analyst mutates one shared dict in place, which stops holding as
+    soon as checkpointing, Send-based fan-out or thread isolation is used.
+    """
+    merged = dict(a)
+    for key, value in b.items():
+        existing = merged.get(key)
+        if isinstance(existing, dict) and isinstance(value, dict):
+            merged[key] = merge_dicts(existing, value)
+        else:
+            merged[key] = value
+    return merged
 
 
 # Define agent state
 class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], operator.add]
-    data: Annotated[dict[str, any], merge_dicts]
-    metadata: Annotated[dict[str, any], merge_dicts]
+    data: Annotated[dict[str, Any], merge_dicts]
+    metadata: Annotated[dict[str, Any], merge_dicts]
 
 
 def show_agent_reasoning(output, agent_name):

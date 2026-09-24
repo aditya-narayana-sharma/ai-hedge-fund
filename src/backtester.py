@@ -1,8 +1,15 @@
-import sys
+import os
 
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
-import questionary
+
+import matplotlib
+
+# Selecting a backend must happen before pyplot is imported. Without a display
+# the interactive backends block on a GUI loop and write no file, which is why
+# the equity curve produced nothing under Docker or CI.
+if not os.environ.get("MPLBACKEND") and not os.environ.get("DISPLAY"):
+    matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -11,8 +18,8 @@ import numpy as np
 import itertools
 
 from src.data.portfolio import create_portfolio, net_liquidation_value
-from src.llm.models import LLM_ORDER, OLLAMA_LLM_ORDER, get_model_info, ModelProvider
-from src.utils.analysts import ANALYST_ORDER
+from src.utils.analysts import add_analyst_arguments, resolve_selected_analysts
+from src.utils.model_selection import add_model_arguments, resolve_model
 from src.main import run_hedge_fund
 from src.tools.api import (
     get_company_news,
@@ -23,7 +30,6 @@ from src.tools.api import (
 )
 from src.utils.display import print_backtest_results, format_backtest_row
 from typing_extensions import Callable
-from src.utils.ollama import ensure_ollama_and_model
 
 init(autoreset=True)
 
@@ -40,6 +46,8 @@ class Backtester:
         model_provider: str = "OpenAI",
         selected_analysts: list[str] = [],
         initial_margin_requirement: float = 0.0,
+        on_day: Callable[[dict], None] | None = None,
+        verbose: bool = True,
     ):
         """
         :param agent: The trading agent (Callable).
@@ -51,6 +59,8 @@ class Backtester:
         :param model_provider: Which LLM provider (OpenAI, etc).
         :param selected_analysts: List of analyst names or IDs to incorporate.
         :param initial_margin_requirement: The margin ratio (e.g. 0.5 = 50%).
+        :param on_day: Called with each simulated day's summary, for streaming.
+        :param verbose: Print the running results table. Off for API callers.
         """
         self.agent = agent
         self.tickers = tickers
@@ -60,6 +70,8 @@ class Backtester:
         self.model_name = model_name
         self.model_provider = model_provider
         self.selected_analysts = selected_analysts
+        self.on_day = on_day
+        self.verbose = verbose
 
         # Initialize portfolio with support for long/short positions
         self.portfolio_values = []
@@ -235,7 +247,8 @@ class Backtester:
 
     def prefetch_data(self):
         """Pre-fetch all data needed for the backtest period."""
-        print("\nPre-fetching data for the entire backtest period...")
+        if self.verbose:
+            print("\nPre-fetching data for the entire backtest period...")
 
         # Convert end_date string to datetime, fetch up to 1 year before
         end_date_dt = datetime.strptime(self.end_date, "%Y-%m-%d")
@@ -255,7 +268,8 @@ class Backtester:
             # Fetch company news
             get_company_news(ticker, self.end_date, start_date=self.start_date, limit=1000)
 
-        print("Data pre-fetch complete.")
+        if self.verbose:
+            print("Data pre-fetch complete.")
 
     def run_backtest(self):
         # Pre-fetch all data at the start
@@ -265,7 +279,8 @@ class Backtester:
         table_rows = []
         performance_metrics = {"sharpe_ratio": None, "sortino_ratio": None, "max_drawdown": None, "long_short_ratio": None, "gross_exposure": None, "net_exposure": None}
 
-        print("\nStarting backtest...")
+        if self.verbose:
+            print("\nStarting backtest...")
 
         # Initialize portfolio values list with initial capital
         if len(dates) > 0:
@@ -429,7 +444,11 @@ class Backtester:
             )
 
             table_rows.extend(date_rows)
-            print_backtest_results(table_rows)
+            if self.verbose:
+                print_backtest_results(table_rows)
+
+            if self.on_day:
+                self.on_day({"date": current_date_str, "portfolio_value": total_value, "return_pct": portfolio_return})
 
         # Store the final performance metrics for reference in analyze_performance
         self.performance_metrics = performance_metrics
@@ -485,95 +504,130 @@ class Backtester:
             performance_metrics["max_drawdown"] = 0.0
             performance_metrics["max_drawdown_date"] = None
 
-    def analyze_performance(self):
-        """Creates a performance DataFrame, prints summary stats, and plots equity curve."""
+    def performance_dataframe(self) -> pd.DataFrame:
+        """Daily portfolio values and returns, indexed by date."""
         if not self.portfolio_values:
-            print("No portfolio data found. Please run the backtest first.")
             return pd.DataFrame()
 
         performance_df = pd.DataFrame(self.portfolio_values).set_index("Date")
         if performance_df.empty:
-            print("No valid performance data to analyze.")
             return performance_df
+
+        performance_df["Daily Return"] = performance_df["Portfolio Value"].pct_change().fillna(0)
+        return performance_df
+
+    def summarize_performance(self, performance_df: pd.DataFrame | None = None) -> dict:
+        """Compute the headline metrics without printing or plotting.
+
+        Split out from analyze_performance so the HTTP API can return the same
+        numbers the CLI prints, rather than recomputing them.
+        """
+        if performance_df is None:
+            performance_df = self.performance_dataframe()
+        if performance_df.empty:
+            return {}
 
         final_portfolio_value = performance_df["Portfolio Value"].iloc[-1]
         total_return = ((final_portfolio_value - self.initial_capital) / self.initial_capital) * 100
 
-        print(f"\n{Fore.WHITE}{Style.BRIGHT}PORTFOLIO PERFORMANCE SUMMARY:{Style.RESET_ALL}")
-        print(f"Total Return: {Fore.GREEN if total_return >= 0 else Fore.RED}{total_return:.2f}%{Style.RESET_ALL}")
-
-        # Print realized P&L for informational purposes only
-        total_realized_gains = sum(self.portfolio["realized_gains"][ticker]["long"] + self.portfolio["realized_gains"][ticker]["short"] for ticker in self.tickers)
-        print(f"Total Realized Gains/Losses: {Fore.GREEN if total_realized_gains >= 0 else Fore.RED}${total_realized_gains:,.2f}{Style.RESET_ALL}")
-
-        # Plot the portfolio value over time
-        plt.figure(figsize=(12, 6))
-        plt.plot(performance_df.index, performance_df["Portfolio Value"], color="blue")
-        plt.title("Portfolio Value Over Time")
-        plt.ylabel("Portfolio Value ($)")
-        plt.xlabel("Date")
-        plt.grid(True)
-        plt.show()
-
-        # Compute daily returns
-        performance_df["Daily Return"] = performance_df["Portfolio Value"].pct_change().fillna(0)
         daily_rf = 0.0434 / 252  # daily risk-free rate
         mean_daily_return = performance_df["Daily Return"].mean()
         std_daily_return = performance_df["Daily Return"].std()
+        sharpe = np.sqrt(252) * ((mean_daily_return - daily_rf) / std_daily_return) if std_daily_return else 0.0
 
-        # Annualized Sharpe Ratio
-        if std_daily_return != 0:
-            annualized_sharpe = np.sqrt(252) * ((mean_daily_return - daily_rf) / std_daily_return)
-        else:
-            annualized_sharpe = 0
-        print(f"\nSharpe Ratio: {Fore.YELLOW}{annualized_sharpe:.2f}{Style.RESET_ALL}")
-
-        # Use the max drawdown value calculated during the backtest if available
-        max_drawdown = getattr(self, "performance_metrics", {}).get("max_drawdown")
-        max_drawdown_date = getattr(self, "performance_metrics", {}).get("max_drawdown_date")
-
-        # If no value exists yet, calculate it
+        # Prefer the drawdown computed during the run; fall back to the curve.
+        metrics = getattr(self, "performance_metrics", {}) or {}
+        max_drawdown = metrics.get("max_drawdown")
+        max_drawdown_date = metrics.get("max_drawdown_date")
         if max_drawdown is None:
             rolling_max = performance_df["Portfolio Value"].cummax()
             drawdown = (performance_df["Portfolio Value"] - rolling_max) / rolling_max
             max_drawdown = drawdown.min() * 100
             max_drawdown_date = drawdown.idxmin().strftime("%Y-%m-%d") if pd.notnull(drawdown.idxmin()) else None
 
-        if max_drawdown_date:
-            print(f"Maximum Drawdown: {Fore.RED}{abs(max_drawdown):.2f}%{Style.RESET_ALL} (on {max_drawdown_date})")
-        else:
-            print(f"Maximum Drawdown: {Fore.RED}{abs(max_drawdown):.2f}%{Style.RESET_ALL}")
-
-        # Win Rate
         winning_days = len(performance_df[performance_df["Daily Return"] > 0])
         total_days = max(len(performance_df) - 1, 1)
         win_rate = (winning_days / total_days) * 100
-        print(f"Win Rate: {Fore.GREEN}{win_rate:.2f}%{Style.RESET_ALL}")
 
-        # Average Win/Loss Ratio
         positive_returns = performance_df[performance_df["Daily Return"] > 0]["Daily Return"]
         negative_returns = performance_df[performance_df["Daily Return"] < 0]["Daily Return"]
         avg_win = positive_returns.mean() if not positive_returns.empty else 0
         avg_loss = abs(negative_returns.mean()) if not negative_returns.empty else 0
-        if avg_loss != 0:
+        if avg_loss:
             win_loss_ratio = avg_win / avg_loss
         else:
             win_loss_ratio = float("inf") if avg_win > 0 else 0
-        print(f"Win/Loss Ratio: {Fore.GREEN}{win_loss_ratio:.2f}{Style.RESET_ALL}")
 
-        # Maximum Consecutive Wins / Losses
         returns_binary = (performance_df["Daily Return"] > 0).astype(int)
-        if len(returns_binary) > 0:
-            max_consecutive_wins = max((len(list(g)) for k, g in itertools.groupby(returns_binary) if k == 1), default=0)
-            max_consecutive_losses = max((len(list(g)) for k, g in itertools.groupby(returns_binary) if k == 0), default=0)
-        else:
-            max_consecutive_wins = 0
-            max_consecutive_losses = 0
+        max_consecutive_wins = max((len(list(g)) for k, g in itertools.groupby(returns_binary) if k == 1), default=0)
+        max_consecutive_losses = max((len(list(g)) for k, g in itertools.groupby(returns_binary) if k == 0), default=0)
 
-        print(f"Max Consecutive Wins: {Fore.GREEN}{max_consecutive_wins}{Style.RESET_ALL}")
-        print(f"Max Consecutive Losses: {Fore.RED}{max_consecutive_losses}{Style.RESET_ALL}")
+        total_realized_gains = sum(self.portfolio["realized_gains"][ticker]["long"] + self.portfolio["realized_gains"][ticker]["short"] for ticker in self.tickers)
+
+        return {
+            "total_return_pct": float(total_return),
+            "total_realized_gains": float(total_realized_gains),
+            "sharpe_ratio": float(sharpe),
+            "sortino_ratio": metrics.get("sortino_ratio"),
+            "max_drawdown_pct": float(max_drawdown),
+            "max_drawdown_date": max_drawdown_date,
+            "win_rate_pct": float(win_rate),
+            "win_loss_ratio": float(win_loss_ratio),
+            "max_consecutive_wins": int(max_consecutive_wins),
+            "max_consecutive_losses": int(max_consecutive_losses),
+        }
+
+    def analyze_performance(self, chart_output: str | None = None):
+        """Print the performance summary and render the equity curve.
+
+        Pass ``chart_output`` to save the equity curve to a file; with no
+        display available the chart is only saved, never shown.
+        """
+        performance_df = self.performance_dataframe()
+        if performance_df.empty:
+            print("No portfolio data found. Please run the backtest first.")
+            return performance_df
+
+        summary = self.summarize_performance(performance_df)
+
+        total_return = summary["total_return_pct"]
+        total_realized_gains = summary["total_realized_gains"]
+        print(f"\n{Fore.WHITE}{Style.BRIGHT}PORTFOLIO PERFORMANCE SUMMARY:{Style.RESET_ALL}")
+        print(f"Total Return: {Fore.GREEN if total_return >= 0 else Fore.RED}{total_return:.2f}%{Style.RESET_ALL}")
+        print(f"Total Realized Gains/Losses: {Fore.GREEN if total_realized_gains >= 0 else Fore.RED}${total_realized_gains:,.2f}{Style.RESET_ALL}")
+
+        self.render_equity_curve(performance_df, chart_output)
+
+        print(f"\nSharpe Ratio: {Fore.YELLOW}{summary['sharpe_ratio']:.2f}{Style.RESET_ALL}")
+
+        max_drawdown = summary["max_drawdown_pct"]
+        if summary["max_drawdown_date"]:
+            print(f"Maximum Drawdown: {Fore.RED}{abs(max_drawdown):.2f}%{Style.RESET_ALL} (on {summary['max_drawdown_date']})")
+        else:
+            print(f"Maximum Drawdown: {Fore.RED}{abs(max_drawdown):.2f}%{Style.RESET_ALL}")
+
+        print(f"Win Rate: {Fore.GREEN}{summary['win_rate_pct']:.2f}%{Style.RESET_ALL}")
+        print(f"Win/Loss Ratio: {Fore.GREEN}{summary['win_loss_ratio']:.2f}{Style.RESET_ALL}")
+        print(f"Max Consecutive Wins: {Fore.GREEN}{summary['max_consecutive_wins']}{Style.RESET_ALL}")
+        print(f"Max Consecutive Losses: {Fore.RED}{summary['max_consecutive_losses']}{Style.RESET_ALL}")
 
         return performance_df
+
+    def render_equity_curve(self, performance_df: pd.DataFrame, chart_output: str | None = None) -> None:
+        """Draw the equity curve, saving to a file and/or showing a window."""
+        plt.figure(figsize=(12, 6))
+        plt.plot(performance_df.index, performance_df["Portfolio Value"], color="blue")
+        plt.title("Portfolio Value Over Time")
+        plt.ylabel("Portfolio Value ($)")
+        plt.xlabel("Date")
+        plt.grid(True)
+
+        if chart_output:
+            plt.savefig(chart_output, bbox_inches="tight")
+            print(f"Equity curve written to {chart_output}")
+        if matplotlib.get_backend().lower() != "agg":
+            plt.show()
+        plt.close()
 
 
 ### 4. Run the Backtest #####
@@ -584,7 +638,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--tickers",
         type=str,
-        required=False,
+        required=True,
         help="Comma-separated list of stock ticker symbols (e.g., AAPL,MSFT,GOOGL)",
     )
     parser.add_argument(
@@ -612,123 +666,22 @@ if __name__ == "__main__":
         help="Margin ratio for short positions, e.g. 0.5 for 50% (default: 0.0)",
     )
     parser.add_argument(
-        "--analysts",
+        "--chart-output",
         type=str,
-        required=False,
-        help="Comma-separated list of analysts to use (e.g., michael_burry,other_analyst)",
+        help="Write the equity-curve chart to this path instead of opening a window",
     )
-    parser.add_argument(
-        "--analysts-all",
-        action="store_true",
-        help="Use all available analysts (overrides --analysts)",
-    )
-    parser.add_argument("--ollama", action="store_true", help="Use Ollama for local LLM inference")
+    add_analyst_arguments(parser)
+    add_model_arguments(parser)
 
     args = parser.parse_args()
 
     # Parse tickers from comma-separated string
-    tickers = [ticker.strip() for ticker in args.tickers.split(",")] if args.tickers else []
+    tickers = [ticker.strip() for ticker in args.tickers.split(",") if ticker.strip()]
+    if not tickers:
+        parser.error("--tickers must name at least one ticker")
 
-    # Parse analysts from command-line flags
-    selected_analysts = None
-    if args.analysts_all:
-        selected_analysts = [a[1] for a in ANALYST_ORDER]
-    elif args.analysts:
-        selected_analysts = [a.strip() for a in args.analysts.split(",") if a.strip()]
-    else:
-        # Choose analysts interactively
-        choices = questionary.checkbox(
-            "Use the Space bar to select/unselect analysts.",
-            choices=[questionary.Choice(display, value=value) for display, value in ANALYST_ORDER],
-            instruction="\n\nPress 'a' to toggle all.\n\nPress Enter when done to run the hedge fund.",
-            validate=lambda x: len(x) > 0 or "You must select at least one analyst.",
-            style=questionary.Style(
-                [
-                    ("checkbox-selected", "fg:green"),
-                    ("selected", "fg:green noinherit"),
-                    ("highlighted", "noinherit"),
-                    ("pointer", "noinherit"),
-                ]
-            ),
-        ).ask()
-        if not choices:
-            print("\n\nInterrupt received. Exiting...")
-            sys.exit(0)
-        else:
-            selected_analysts = choices
-            print(f"\nSelected analysts: " f"{', '.join(Fore.GREEN + choice.title().replace('_', ' ') + Style.RESET_ALL for choice in choices)}")
-
-    # Select LLM model based on whether Ollama is being used
-    model_name = ""
-    model_provider = None
-
-    if args.ollama:
-        print(f"{Fore.CYAN}Using Ollama for local LLM inference.{Style.RESET_ALL}")
-
-        # Select from Ollama-specific models
-        model_name = questionary.select(
-            "Select your Ollama model:",
-            choices=[questionary.Choice(display, value=value) for display, value, _ in OLLAMA_LLM_ORDER],
-            style=questionary.Style(
-                [
-                    ("selected", "fg:green bold"),
-                    ("pointer", "fg:green bold"),
-                    ("highlighted", "fg:green"),
-                    ("answer", "fg:green bold"),
-                ]
-            ),
-        ).ask()
-
-        if not model_name:
-            print("\n\nInterrupt received. Exiting...")
-            sys.exit(0)
-
-        if model_name == "-":
-            model_name = questionary.text("Enter the custom model name:").ask()
-            if not model_name:
-                print("\n\nInterrupt received. Exiting...")
-                sys.exit(0)
-
-        # Ensure Ollama is installed, running, and the model is available
-        if not ensure_ollama_and_model(model_name):
-            print(f"{Fore.RED}Cannot proceed without Ollama and the selected model.{Style.RESET_ALL}")
-            sys.exit(1)
-
-        model_provider = ModelProvider.OLLAMA.value
-        print(f"\nSelected {Fore.CYAN}Ollama{Style.RESET_ALL} model: {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n")
-    else:
-        # Use the standard cloud-based LLM selection
-        model_choice = questionary.select(
-            "Select your LLM model:",
-            choices=[questionary.Choice(display, value=(name, provider)) for display, name, provider in LLM_ORDER],
-            style=questionary.Style(
-                [
-                    ("selected", "fg:green bold"),
-                    ("pointer", "fg:green bold"),
-                    ("highlighted", "fg:green"),
-                    ("answer", "fg:green bold"),
-                ]
-            ),
-        ).ask()
-
-        if not model_choice:
-            print("\n\nInterrupt received. Exiting...")
-            sys.exit(0)
-        
-        model_name, model_provider = model_choice
-
-        model_info = get_model_info(model_name, model_provider)
-        if model_info:
-            if model_info.is_custom():
-                model_name = questionary.text("Enter the custom model name:").ask()
-                if not model_name:
-                    print("\n\nInterrupt received. Exiting...")
-                    sys.exit(0)
-
-            print(f"\nSelected {Fore.CYAN}{model_provider}{Style.RESET_ALL} model: {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n")
-        else:
-            model_provider = "Unknown"
-            print(f"\nSelected model: {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n")
+    selected_analysts = resolve_selected_analysts(args.analysts, args.analysts_all)
+    model_name, model_provider = resolve_model(args)
 
     # Create and run the backtester
     backtester = Backtester(
@@ -744,4 +697,4 @@ if __name__ == "__main__":
     )
 
     performance_metrics = backtester.run_backtest()
-    performance_df = backtester.analyze_performance()
+    performance_df = backtester.analyze_performance(chart_output=args.chart_output)

@@ -64,12 +64,12 @@ def call_llm(
 
             if attempt == max_retries - 1:
                 print(f"Error in LLM call after {max_retries} attempts: {e}")
-                # Use default_factory if provided, otherwise create a basic default
-                if default_factory:
-                    return default_factory()
-                return create_default_response(pydantic_model)
+                break
 
-    # This should never be reached due to the retry logic above
+    # Every attempt either raised or produced unparseable output. Both paths owe
+    # the caller its own fallback, not just the exception path.
+    if default_factory:
+        return default_factory()
     return create_default_response(pydantic_model)
 
 
@@ -96,15 +96,45 @@ def create_default_response(model_class: Type[T]) -> T:
 
 
 def extract_json_from_response(content: str) -> Optional[dict]:
-    """Extracts JSON from markdown-formatted response."""
-    try:
-        json_start = content.find("```json")
-        if json_start != -1:
-            json_text = content[json_start + 7 :]  # Skip past ```json
-            json_end = json_text.find("```")
-            if json_end != -1:
-                json_text = json_text[:json_end].strip()
-                return json.loads(json_text)
-    except Exception as e:
-        print(f"Error extracting JSON from response: {e}")
+    """Extract a JSON object from an LLM response.
+
+    Accepts a bare object, a ```json fence, a plain ``` fence, and an object
+    embedded in prose. Only fenced ```json output was accepted before, so a
+    model that answered with bare JSON burned every retry and fell through to
+    the default response.
+    """
+    if not content:
+        return None
+
+    for candidate in _json_candidates(content):
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+        # A model asked for one object sometimes wraps it in an array.
+        if isinstance(parsed, list) and len(parsed) == 1 and isinstance(parsed[0], dict):
+            return parsed[0]
     return None
+
+
+def _json_candidates(content: str) -> list[str]:
+    """Substrings of a response that might be a JSON object, best guess first."""
+    candidates = [content.strip()]
+
+    for fence in ("```json", "```"):
+        start = content.find(fence)
+        if start == -1:
+            continue
+        body = content[start + len(fence) :]
+        end = body.find("```")
+        candidates.append(body[:end].strip() if end != -1 else body.strip())
+
+    # Last resort: the outermost brace pair, for JSON wrapped in prose.
+    first_brace = content.find("{")
+    last_brace = content.rfind("}")
+    if first_brace != -1 and last_brace > first_brace:
+        candidates.append(content[first_brace : last_brace + 1])
+
+    return candidates
