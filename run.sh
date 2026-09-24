@@ -14,6 +14,8 @@ show_help() {
   echo "  --margin-requirement RATIO  Margin requirement ratio (default: 0.0)"
   echo "  --ollama            Use Ollama for local LLM inference"
   echo "  --show-reasoning    Show reasoning from each agent"
+  echo "  --analysts LIST     Comma-separated analysts (e.g., warren_buffett,michael_burry)"
+  echo "  --analysts-all      Use every available analyst (overrides --analysts)"
   echo ""
   echo "Commands:"
   echo "  main                Run the main hedge fund application"
@@ -42,6 +44,9 @@ END_DATE=""
 INITIAL_AMOUNT="100000.0"
 MARGIN_REQUIREMENT="0.0"
 SHOW_REASONING=""
+# Default to every analyst so the containerised run never blocks on the
+# interactive picker. Override with --analysts or --analysts-all.
+ANALYSTS="--analysts-all"
 COMMAND=""
 MODEL_NAME=""
 
@@ -74,6 +79,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --show-reasoning)
       SHOW_REASONING="--show-reasoning"
+      shift
+      ;;
+    --analysts)
+      ANALYSTS="--analysts $2"
+      shift 2
+      ;;
+    --analysts-all)
+      ANALYSTS="--analysts-all"
       shift
       ;;
     main|backtest|build|help|compose|ollama)
@@ -299,6 +312,10 @@ if [ -n "$USE_OLLAMA" ]; then
   if [ -n "$MARGIN_REQUIREMENT" ]; then
     COMMAND_OVERRIDE="$COMMAND_OVERRIDE --margin-requirement $MARGIN_REQUIREMENT"
   fi
+
+  if [ -n "$ANALYSTS" ]; then
+    COMMAND_OVERRIDE="$COMMAND_OVERRIDE $ANALYSTS"
+  fi
   
   # Run the command with Docker Compose
   echo "Running AI Hedge Fund with Ollama using Docker Compose..."
@@ -322,7 +339,7 @@ fi
 CMD="docker run -it --rm -v $(pwd)/.env:/app/.env"
 
 # Add the command
-CMD="$CMD ai-hedge-fund python $SCRIPT_PATH --ticker $TICKER $START_DATE $END_DATE $INITIAL_PARAM --margin-requirement $MARGIN_REQUIREMENT $SHOW_REASONING"
+CMD="$CMD ai-hedge-fund python $SCRIPT_PATH --ticker $TICKER $START_DATE $END_DATE $INITIAL_PARAM --margin-requirement $MARGIN_REQUIREMENT $SHOW_REASONING $ANALYSTS"
 
 # Run the command
 echo "Running: $CMD"

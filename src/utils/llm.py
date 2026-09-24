@@ -1,9 +1,11 @@
 """Helper functions for LLM"""
 
-import json
-from typing import TypeVar, Type, Optional, Any
+from typing import Any, Optional, Type, TypeVar
+
 from pydantic import BaseModel
+
 from src.llm.models import get_model, get_model_info
+from src.utils.json_parsing import extract_json_from_response
 from src.utils.progress import progress
 
 T = TypeVar("T", bound=BaseModel)
@@ -64,12 +66,13 @@ def call_llm(
 
             if attempt == max_retries - 1:
                 print(f"Error in LLM call after {max_retries} attempts: {e}")
-                # Use default_factory if provided, otherwise create a basic default
-                if default_factory:
-                    return default_factory()
-                return create_default_response(pydantic_model)
+                break
 
-    # This should never be reached due to the retry logic above
+    # Every attempt either raised or produced unparseable output. Both paths
+    # must honour the caller's fallback; previously only the exception path did,
+    # so a parse failure silently discarded default_factory.
+    if default_factory:
+        return default_factory()
     return create_default_response(pydantic_model)
 
 
@@ -93,18 +96,3 @@ def create_default_response(model_class: Type[T]) -> T:
                 default_values[field_name] = None
 
     return model_class(**default_values)
-
-
-def extract_json_from_response(content: str) -> Optional[dict]:
-    """Extracts JSON from markdown-formatted response."""
-    try:
-        json_start = content.find("```json")
-        if json_start != -1:
-            json_text = content[json_start + 7 :]  # Skip past ```json
-            json_end = json_text.find("```")
-            if json_end != -1:
-                json_text = json_text[:json_end].strip()
-                return json.loads(json_text)
-    except Exception as e:
-        print(f"Error extracting JSON from response: {e}")
-    return None

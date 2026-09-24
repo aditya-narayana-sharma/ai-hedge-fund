@@ -9,6 +9,9 @@ set END_DATE=
 set INITIAL_AMOUNT=100000.0
 set MARGIN_REQUIREMENT=0.0
 set SHOW_REASONING=
+:: Default to every analyst so the containerised run never blocks on the
+:: interactive picker. Override with --analysts or --analysts-all.
+set ANALYSTS=--analysts-all
 set COMMAND=
 set MODEL_NAME=
 
@@ -26,6 +29,8 @@ echo   --initial-cash AMT  Initial cash position (default: 100000.0)
 echo   --margin-requirement RATIO  Margin requirement ratio (default: 0.0)
 echo   --ollama            Use Ollama for local LLM inference
 echo   --show-reasoning    Show reasoning from each agent
+echo   --analysts LIST     Comma-separated analysts (e.g., warren_buffett,michael_burry)
+echo   --analysts-all      Use every available analyst (overrides --analysts)
 echo.
 echo Commands:
 echo   main                Run the main hedge fund application
@@ -86,6 +91,17 @@ if "%~1"=="--ollama" (
 )
 if "%~1"=="--show-reasoning" (
     set SHOW_REASONING=--show-reasoning
+    shift
+    goto :parse_args
+)
+if "%~1"=="--analysts" (
+    set ANALYSTS=--analysts %~2
+    shift
+    shift
+    goto :parse_args
+)
+if "%~1"=="--analysts-all" (
+    set ANALYSTS=--analysts-all
     shift
     goto :parse_args
 )
@@ -330,6 +346,10 @@ if not "!USE_OLLAMA!"=="" (
     if not "!MARGIN_REQUIREMENT!"=="" (
         set COMMAND_OVERRIDE=!COMMAND_OVERRIDE! --margin-requirement !MARGIN_REQUIREMENT!
     )
+
+    if not "!ANALYSTS!"=="" (
+        set COMMAND_OVERRIDE=!COMMAND_OVERRIDE! !ANALYSTS!
+    )
     
     :: Run the command with Docker Compose
     echo Running AI Hedge Fund with Ollama using Docker Compose...
@@ -353,7 +373,7 @@ if not "!USE_OLLAMA!"=="" (
 set CMD=docker run -it --rm -v %cd%\.env:/app/.env
 
 :: Add the command
-set CMD=!CMD! ai-hedge-fund python !SCRIPT_PATH! --ticker !TICKER! !START_DATE! !END_DATE! !INITIAL_PARAM! --margin-requirement !MARGIN_REQUIREMENT! !SHOW_REASONING!
+set CMD=!CMD! ai-hedge-fund python !SCRIPT_PATH! --ticker !TICKER! !START_DATE! !END_DATE! !INITIAL_PARAM! --margin-requirement !MARGIN_REQUIREMENT! !SHOW_REASONING! !ANALYSTS!
 
 :: Run the command
 echo Running: !CMD!

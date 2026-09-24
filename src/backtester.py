@@ -1,27 +1,27 @@
-import sys
-
-from datetime import datetime, timedelta
-from dateutil.relativedelta import relativedelta
-import questionary
-
-import matplotlib.pyplot as plt
-import pandas as pd
-from colorama import Fore, Style, init
-import numpy as np
 import itertools
+import sys
+from datetime import datetime, timedelta
 
-from src.llm.models import LLM_ORDER, OLLAMA_LLM_ORDER, get_model_info, ModelProvider
-from src.utils.analysts import ANALYST_ORDER
+import numpy as np
+import pandas as pd
+import questionary
+from colorama import Fore, init, Style
+from dateutil.relativedelta import relativedelta
+from typing_extensions import Callable
+
+from src.data.portfolio import create_portfolio, DEFAULT_POSITION_LIMIT, net_liquidation_value
+from src.llm.models import get_model_info, LLM_ORDER, ModelProvider, OLLAMA_LLM_ORDER
 from src.main import run_hedge_fund
 from src.tools.api import (
     get_company_news,
-    get_price_data,
-    get_prices,
     get_financial_metrics,
     get_insider_trades,
+    get_price_data,
+    get_prices,
 )
-from src.utils.display import print_backtest_results, format_backtest_row
-from typing_extensions import Callable
+from src.utils.analysts import ANALYST_ORDER
+from src.utils.charts import plt, render_figure
+from src.utils.display import format_backtest_row, print_backtest_results
 from src.utils.ollama import ensure_ollama_and_model
 
 init(autoreset=True)
@@ -39,6 +39,8 @@ class Backtester:
         model_provider: str = "OpenAI",
         selected_analysts: list[str] = [],
         initial_margin_requirement: float = 0.0,
+        position_limit: float = DEFAULT_POSITION_LIMIT,
+        chart_output: str | None = None,
     ):
         """
         :param agent: The trading agent (Callable).
@@ -59,22 +61,12 @@ class Backtester:
         self.model_name = model_name
         self.model_provider = model_provider
         self.selected_analysts = selected_analysts
+        self.position_limit = position_limit
+        self.chart_output = chart_output
 
         # Initialize portfolio with support for long/short positions
         self.portfolio_values = []
-        self.portfolio = {
-            "cash": initial_capital,
-            "margin_used": 0.0,  # total margin usage across all short positions
-            "margin_requirement": initial_margin_requirement,  # The margin ratio required for shorts
-            "positions": {ticker: {"long": 0, "short": 0, "long_cost_basis": 0.0, "short_cost_basis": 0.0, "short_margin_used": 0.0} for ticker in tickers},  # Number of shares held long  # Number of shares held short  # Average cost basis per share (long)  # Average cost basis per share (short)  # Dollars of margin used for this ticker's short
-            "realized_gains": {
-                ticker: {
-                    "long": 0.0,  # Realized gains from long positions
-                    "short": 0.0,  # Realized gains from short positions
-                }
-                for ticker in tickers
-            },
-        }
+        self.portfolio = create_portfolio(initial_capital, initial_margin_requirement, tickers)
 
     def execute_trade(self, ticker: str, action: str, quantity: float, current_price: float):
         """
@@ -241,27 +233,12 @@ class Backtester:
         return 0
 
     def calculate_portfolio_value(self, current_prices):
+        """Net liquidation value: cash + posted short margin + longs - shorts.
+
+        Delegates to the shared model so the backtester and the risk manager
+        cannot drift apart again.
         """
-        Calculate total portfolio value, including:
-          - cash
-          - market value of long positions
-          - unrealized gains/losses for short positions
-        """
-        total_value = self.portfolio["cash"]
-
-        for ticker in self.tickers:
-            position = self.portfolio["positions"][ticker]
-            price = current_prices[ticker]
-
-            # Long position value
-            long_value = position["long"] * price
-            total_value += long_value
-
-            # Short position unrealized PnL = short_shares * (short_cost_basis - current_price)
-            if position["short"] > 0:
-                total_value -= position["short"] * price
-
-        return total_value
+        return net_liquidation_value(self.portfolio, current_prices)
 
     def prefetch_data(self):
         """Pre-fetch all data needed for the backtest period."""
@@ -350,6 +327,7 @@ class Backtester:
                 model_name=self.model_name,
                 model_provider=self.model_provider,
                 selected_analysts=self.selected_analysts,
+                position_limit=self.position_limit,
             )
             decisions = output["decisions"]
             analyst_signals = output["analyst_signals"]
@@ -379,7 +357,17 @@ class Backtester:
             long_short_ratio = long_exposure / short_exposure if short_exposure > 1e-9 else float("inf")
 
             # Track each day's portfolio value in self.portfolio_values
-            self.portfolio_values.append({"Date": current_date, "Portfolio Value": total_value, "Long Exposure": long_exposure, "Short Exposure": short_exposure, "Gross Exposure": gross_exposure, "Net Exposure": net_exposure, "Long/Short Ratio": long_short_ratio})
+            self.portfolio_values.append(
+                {
+                    "Date": current_date,
+                    "Portfolio Value": total_value,
+                    "Long Exposure": long_exposure,
+                    "Short Exposure": short_exposure,
+                    "Gross Exposure": gross_exposure,
+                    "Net Exposure": net_exposure,
+                    "Long/Short Ratio": long_short_ratio,
+                }
+            )
 
             # ---------------------------------------------------------------
             # 3) Build the table rows to display
@@ -429,6 +417,11 @@ class Backtester:
             # The realized gains are already reflected in cash balance, so we don't add them separately
             portfolio_return = (total_value / self.initial_capital - 1) * 100
 
+            # Refresh metrics *before* rendering them, otherwise the summary row
+            # prints the previous trading day's Sharpe/Sortino/drawdown.
+            if len(self.portfolio_values) > 3:
+                self._update_performance_metrics(performance_metrics)
+
             # Add summary row for this day
             date_rows.append(
                 format_backtest_row(
@@ -455,10 +448,6 @@ class Backtester:
 
             table_rows.extend(date_rows)
             print_backtest_results(table_rows)
-
-            # Update performance metrics if we have enough data
-            if len(self.portfolio_values) > 3:
-                self._update_performance_metrics(performance_metrics)
 
         # Store the final performance metrics for reference in analyze_performance
         self.performance_metrics = performance_metrics
@@ -542,7 +531,7 @@ class Backtester:
         plt.ylabel("Portfolio Value ($)")
         plt.xlabel("Date")
         plt.grid(True)
-        plt.show()
+        render_figure(self.chart_output)
 
         # Compute daily returns
         performance_df["Daily Return"] = performance_df["Portfolio Value"].pct_change().fillna(0)
@@ -613,7 +602,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--tickers",
         type=str,
-        required=False,
+        required=True,
         help="Comma-separated list of stock ticker symbols (e.g., AAPL,MSFT,GOOGL)",
     )
     parser.add_argument(
@@ -651,12 +640,26 @@ if __name__ == "__main__":
         action="store_true",
         help="Use all available analysts (overrides --analysts)",
     )
+    parser.add_argument(
+        "--position-limit",
+        type=float,
+        default=DEFAULT_POSITION_LIMIT,
+        help=f"Max fraction of portfolio value per position (default: {DEFAULT_POSITION_LIMIT})",
+    )
+    parser.add_argument(
+        "--chart-output",
+        type=str,
+        default=None,
+        help="Write the equity-curve chart to this path instead of opening a window",
+    )
     parser.add_argument("--ollama", action="store_true", help="Use Ollama for local LLM inference")
 
     args = parser.parse_args()
 
     # Parse tickers from comma-separated string
-    tickers = [ticker.strip() for ticker in args.tickers.split(",")] if args.tickers else []
+    tickers = [ticker.strip() for ticker in args.tickers.split(",") if ticker.strip()]
+    if not tickers:
+        parser.error("--tickers must name at least one ticker symbol")
 
     # Parse analysts from command-line flags
     selected_analysts = None
@@ -743,7 +746,7 @@ if __name__ == "__main__":
         if not model_choice:
             print("\n\nInterrupt received. Exiting...")
             sys.exit(0)
-        
+
         model_name, model_provider = model_choice
 
         model_info = get_model_info(model_name, model_provider)
@@ -770,6 +773,8 @@ if __name__ == "__main__":
         model_provider=model_provider,
         selected_analysts=selected_analysts,
         initial_margin_requirement=args.margin_requirement,
+        position_limit=args.position_limit,
+        chart_output=args.chart_output,
     )
 
     performance_metrics = backtester.run_backtest()

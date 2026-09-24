@@ -1,12 +1,20 @@
 from datetime import datetime, timezone
+from typing import Callable, Dict, List, Optional
+
 from rich.console import Console
 from rich.live import Live
-from rich.table import Table
 from rich.style import Style
+from rich.table import Table
 from rich.text import Text
-from typing import Dict, Optional, Callable, List
+
+from src.utils.run_context import current_run
 
 console = Console()
+
+# (agent_name, ticker, status, timestamp) — four arguments, matching the call
+# site below. The previous annotation declared three, so any handler written to
+# the declared contract raised TypeError on the backend's own extension point.
+ProgressHandler = Callable[[str, Optional[str], str, str], None]
 
 
 class AgentProgress:
@@ -17,14 +25,18 @@ class AgentProgress:
         self.table = Table(show_header=False, box=None, padding=(0, 1))
         self.live = Live(self.table, console=console, refresh_per_second=4)
         self.started = False
-        self.update_handlers: List[Callable[[str, Optional[str], str], None]] = []
+        self.update_handlers: List[ProgressHandler] = []
 
-    def register_handler(self, handler: Callable[[str, Optional[str], str], None]):
-        """Register a handler to be called when agent status updates."""
+    def register_handler(self, handler: ProgressHandler) -> ProgressHandler:
+        """Register a process-wide handler for agent status updates.
+
+        Server code should register on the active :class:`RunContext` instead,
+        so concurrent runs do not receive each other's events.
+        """
         self.update_handlers.append(handler)
         return handler  # Return handler to support use as decorator
 
-    def unregister_handler(self, handler: Callable[[str, Optional[str], str], None]):
+    def unregister_handler(self, handler: ProgressHandler) -> None:
         """Unregister a previously registered handler."""
         if handler in self.update_handlers:
             self.update_handlers.remove(handler)
@@ -42,28 +54,44 @@ class AgentProgress:
             self.started = False
 
     def update_status(self, agent_name: str, ticker: Optional[str] = None, status: str = ""):
-        """Update the status of an agent."""
-        if agent_name not in self.agent_status:
-            self.agent_status[agent_name] = {"status": "", "ticker": None}
+        """Update the status of an agent.
+
+        Inside a run scope the status and the handlers both belong to that run,
+        so two concurrent web requests never see each other's agents. Outside
+        one (the CLI) this falls back to the process-wide state and repaints
+        the live table.
+        """
+        run = current_run()
+        store = run.agent_status if run is not None else self.agent_status
+
+        if agent_name not in store:
+            store[agent_name] = {"status": "", "ticker": None}
 
         if ticker:
-            self.agent_status[agent_name]["ticker"] = ticker
+            store[agent_name]["ticker"] = ticker
         if status:
-            self.agent_status[agent_name]["status"] = status
+            store[agent_name]["status"] = status
 
         # Set the timestamp as UTC datetime
         timestamp = datetime.now(timezone.utc).isoformat()
-        self.agent_status[agent_name]["timestamp"] = timestamp
+        store[agent_name]["timestamp"] = timestamp
 
-        # Notify all registered handlers
-        for handler in self.update_handlers:
+        # Notify process-wide handlers, then this run's own handlers.
+        for handler in list(self.update_handlers):
             handler(agent_name, ticker, status, timestamp)
+
+        if run is not None:
+            for handler in list(run.handlers):
+                handler(agent_name, ticker, status, timestamp)
+            return
 
         self._refresh_display()
 
     def get_all_status(self):
-        """Get the current status of all agents as a dictionary."""
-        return {agent_name: {"ticker": info["ticker"], "status": info["status"], "display_name": self._get_display_name(agent_name)} for agent_name, info in self.agent_status.items()}
+        """Get the current status of all agents in the active run as a dictionary."""
+        run = current_run()
+        store = run.agent_status if run is not None else self.agent_status
+        return {agent_name: {"ticker": info["ticker"], "status": info["status"], "display_name": self._get_display_name(agent_name)} for agent_name, info in store.items()}
 
     def _get_display_name(self, agent_name: str) -> str:
         """Convert agent_name to a display-friendly format."""

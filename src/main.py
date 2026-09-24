@@ -1,44 +1,31 @@
+import argparse
 import sys
+from datetime import datetime
 
+import questionary
+from colorama import Fore, init, Style
+from dateutil.relativedelta import relativedelta
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage
 from langgraph.graph import END, StateGraph
-from colorama import Fore, Style, init
-import questionary
+from langgraph.graph.state import CompiledStateGraph
+
 from src.agents.portfolio_manager import portfolio_management_agent
 from src.agents.risk_manager import risk_management_agent
+from src.data.portfolio import create_portfolio, DEFAULT_POSITION_LIMIT
 from src.graph.state import AgentState
-from src.utils.display import print_trading_output
+from src.llm.models import get_model_info, LLM_ORDER, ModelProvider, OLLAMA_LLM_ORDER
 from src.utils.analysts import ANALYST_ORDER, get_analyst_nodes
-from src.utils.progress import progress
-from src.llm.models import LLM_ORDER, OLLAMA_LLM_ORDER, get_model_info, ModelProvider
+from src.utils.display import print_trading_output
+from src.utils.json_parsing import parse_hedge_fund_response
 from src.utils.ollama import ensure_ollama_and_model
-
-import argparse
-from datetime import datetime
-from dateutil.relativedelta import relativedelta
+from src.utils.progress import progress
 from src.utils.visualize import save_graph_as_png
-import json
 
 # Load environment variables from .env file
 load_dotenv()
 
 init(autoreset=True)
-
-
-def parse_hedge_fund_response(response):
-    """Parses a JSON string and returns a dictionary."""
-    try:
-        return json.loads(response)
-    except json.JSONDecodeError as e:
-        print(f"JSON decoding error: {e}\nResponse: {repr(response)}")
-        return None
-    except TypeError as e:
-        print(f"Invalid response type (expected string, got {type(response).__name__}): {e}")
-        return None
-    except Exception as e:
-        print(f"Unexpected error while parsing response: {e}\nResponse: {repr(response)}")
-        return None
 
 
 ##### Run the Hedge Fund #####
@@ -48,20 +35,24 @@ def run_hedge_fund(
     end_date: str,
     portfolio: dict,
     show_reasoning: bool = False,
-    selected_analysts: list[str] = [],
+    selected_analysts: list[str] | None = None,
     model_name: str = "gpt-4o",
     model_provider: str = "OpenAI",
+    position_limit: float = DEFAULT_POSITION_LIMIT,
+    graph: CompiledStateGraph | None = None,
 ):
+    """Run one hedge-fund pass and return its decisions and analyst signals.
+
+    Pass ``graph`` to reuse an already-compiled workflow; otherwise one is
+    compiled from ``selected_analysts`` (all analysts when omitted). Earlier
+    versions fell back to a module-level ``app`` that only exists under
+    ``__main__``, so any library caller hit ``NameError``.
+    """
     # Start progress tracking
     progress.start()
 
     try:
-        # Create a new workflow if analysts are customized
-        if selected_analysts:
-            workflow = create_workflow(selected_analysts)
-            agent = workflow.compile()
-        else:
-            agent = app
+        agent = graph if graph is not None else create_workflow(selected_analysts).compile()
 
         final_state = agent.invoke(
             {
@@ -81,6 +72,7 @@ def run_hedge_fund(
                     "show_reasoning": show_reasoning,
                     "model_name": model_name,
                     "model_provider": model_provider,
+                    "position_limit": position_limit,
                 },
             },
         )
@@ -145,16 +137,62 @@ if __name__ == "__main__":
     parser.add_argument("--end-date", type=str, help="End date (YYYY-MM-DD). Defaults to today")
     parser.add_argument("--show-reasoning", action="store_true", help="Show reasoning from each agent")
     parser.add_argument("--show-agent-graph", action="store_true", help="Show the agent graph")
+    parser.add_argument(
+        "--analysts",
+        type=str,
+        required=False,
+        help="Comma-separated list of analysts to use (e.g., michael_burry,warren_buffett)",
+    )
+    parser.add_argument(
+        "--analysts-all",
+        action="store_true",
+        help="Use all available analysts (overrides --analysts)",
+    )
+    parser.add_argument(
+        "--position-limit",
+        type=float,
+        default=DEFAULT_POSITION_LIMIT,
+        help=f"Max fraction of portfolio value per position (default: {DEFAULT_POSITION_LIMIT})",
+    )
     parser.add_argument("--ollama", action="store_true", help="Use Ollama for local LLM inference")
 
     args = parser.parse_args()
 
     # Parse tickers from comma-separated string
-    tickers = [ticker.strip() for ticker in args.tickers.split(",")]
+    tickers = [ticker.strip() for ticker in args.tickers.split(",") if ticker.strip()]
+    if not tickers:
+        parser.error("--tickers must name at least one ticker symbol")
 
-    # Auto-select all analysts (bypassing interactive prompt)
-    selected_analysts = [value for _, value in ANALYST_ORDER]
-    print(f"\nAuto-selected analysts: {', '.join(Fore.GREEN + a.title().replace('_', ' ') + Style.RESET_ALL for a in selected_analysts)}\n")
+    # Analyst selection mirrors src/backtester.py: explicit flags win, and the
+    # interactive picker is the no-flag default.
+    valid_analysts = {value for _, value in ANALYST_ORDER}
+    if args.analysts_all:
+        selected_analysts = [value for _, value in ANALYST_ORDER]
+    elif args.analysts:
+        selected_analysts = [a.strip() for a in args.analysts.split(",") if a.strip()]
+        unknown = [a for a in selected_analysts if a not in valid_analysts]
+        if unknown:
+            parser.error(f"Unknown analyst(s): {', '.join(unknown)}. Valid: {', '.join(sorted(valid_analysts))}")
+    else:
+        selected_analysts = questionary.checkbox(
+            "Use the Space bar to select/unselect analysts.",
+            choices=[questionary.Choice(display, value=value) for display, value in ANALYST_ORDER],
+            instruction="\n\nPress 'a' to toggle all.\n\nPress Enter when done to run the hedge fund.",
+            validate=lambda x: len(x) > 0 or "You must select at least one analyst.",
+            style=questionary.Style(
+                [
+                    ("checkbox-selected", "fg:green"),
+                    ("selected", "fg:green noinherit"),
+                    ("highlighted", "noinherit"),
+                    ("pointer", "noinherit"),
+                ]
+            ),
+        ).ask()
+        if not selected_analysts:
+            print("\n\nInterrupt received. Exiting...")
+            sys.exit(0)
+
+    print(f"\nSelected analysts: {', '.join(Fore.GREEN + a.title().replace('_', ' ') + Style.RESET_ALL for a in selected_analysts)}\n")
 
     # Select LLM model based on whether Ollama is being used
     model_name = ""
@@ -264,28 +302,7 @@ if __name__ == "__main__":
         start_date = args.start_date
 
     # Initialize portfolio with cash amount and stock positions
-    portfolio = {
-        "cash": args.initial_cash,  # Initial cash amount
-        "margin_requirement": args.margin_requirement,  # Initial margin requirement
-        "margin_used": 0.0,  # total margin usage across all short positions
-        "positions": {
-            ticker: {
-                "long": 0,  # Number of shares held long
-                "short": 0,  # Number of shares held short
-                "long_cost_basis": 0.0,  # Average cost basis for long positions
-                "short_cost_basis": 0.0,  # Average price at which shares were sold short
-                "short_margin_used": 0.0,  # Dollars of margin used for this ticker's short
-            }
-            for ticker in tickers
-        },
-        "realized_gains": {
-            ticker: {
-                "long": 0.0,  # Realized gains from long positions
-                "short": 0.0,  # Realized gains from short positions
-            }
-            for ticker in tickers
-        },
-    }
+    portfolio = create_portfolio(args.initial_cash, args.margin_requirement, tickers)
 
     # Run the hedge fund
     result = run_hedge_fund(
@@ -297,5 +314,7 @@ if __name__ == "__main__":
         selected_analysts=selected_analysts,
         model_name=model_name,
         model_provider=model_provider,
+        position_limit=args.position_limit,
+        graph=app,
     )
     print_trading_output(result)
