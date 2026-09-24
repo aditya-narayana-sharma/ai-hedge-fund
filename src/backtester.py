@@ -10,6 +10,7 @@ from colorama import Fore, Style, init
 import numpy as np
 import itertools
 
+from src.data.portfolio import create_portfolio, net_liquidation_value
 from src.llm.models import LLM_ORDER, OLLAMA_LLM_ORDER, get_model_info, ModelProvider
 from src.utils.analysts import ANALYST_ORDER
 from src.main import run_hedge_fund
@@ -62,19 +63,7 @@ class Backtester:
 
         # Initialize portfolio with support for long/short positions
         self.portfolio_values = []
-        self.portfolio = {
-            "cash": initial_capital,
-            "margin_used": 0.0,  # total margin usage across all short positions
-            "margin_requirement": initial_margin_requirement,  # The margin ratio required for shorts
-            "positions": {ticker: {"long": 0, "short": 0, "long_cost_basis": 0.0, "short_cost_basis": 0.0, "short_margin_used": 0.0} for ticker in tickers},  # Number of shares held long  # Number of shares held short  # Average cost basis per share (long)  # Average cost basis per share (short)  # Dollars of margin used for this ticker's short
-            "realized_gains": {
-                ticker: {
-                    "long": 0.0,  # Realized gains from long positions
-                    "short": 0.0,  # Realized gains from short positions
-                }
-                for ticker in tickers
-            },
-        }
+        self.portfolio = create_portfolio(initial_capital, initial_margin_requirement, tickers)
 
     def execute_trade(self, ticker: str, action: str, quantity: float, current_price: float):
         """
@@ -241,27 +230,8 @@ class Backtester:
         return 0
 
     def calculate_portfolio_value(self, current_prices):
-        """
-        Calculate total portfolio value, including:
-          - cash
-          - market value of long positions
-          - unrealized gains/losses for short positions
-        """
-        total_value = self.portfolio["cash"]
-
-        for ticker in self.tickers:
-            position = self.portfolio["positions"][ticker]
-            price = current_prices[ticker]
-
-            # Long position value
-            long_value = position["long"] * price
-            total_value += long_value
-
-            # Short position unrealized PnL = short_shares * (short_cost_basis - current_price)
-            if position["short"] > 0:
-                total_value -= position["short"] * price
-
-        return total_value
+        """Net liquidation value: cash + posted short margin + longs - shorts."""
+        return net_liquidation_value(self.portfolio, current_prices)
 
     def prefetch_data(self):
         """Pre-fetch all data needed for the backtest period."""
@@ -429,6 +399,11 @@ class Backtester:
             # The realized gains are already reflected in cash balance, so we don't add them separately
             portfolio_return = (total_value / self.initial_capital - 1) * 100
 
+            # Refresh metrics before the summary row reads them; otherwise the
+            # row prints the previous day's Sharpe, Sortino and drawdown.
+            if len(self.portfolio_values) > 3:
+                self._update_performance_metrics(performance_metrics)
+
             # Add summary row for this day
             date_rows.append(
                 format_backtest_row(
@@ -455,10 +430,6 @@ class Backtester:
 
             table_rows.extend(date_rows)
             print_backtest_results(table_rows)
-
-            # Update performance metrics if we have enough data
-            if len(self.portfolio_values) > 3:
-                self._update_performance_metrics(performance_metrics)
 
         # Store the final performance metrics for reference in analyze_performance
         self.performance_metrics = performance_metrics

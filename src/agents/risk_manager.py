@@ -1,8 +1,13 @@
 from langchain_core.messages import HumanMessage
+from src.data.portfolio import net_liquidation_value
 from src.graph.state import AgentState, show_agent_reasoning
 from src.utils.progress import progress
 from src.tools.api import get_prices, prices_to_df
 import json
+
+# Share of net liquidation value a single ticker may occupy. Override per run
+# with state["metadata"]["position_limit_pct"].
+DEFAULT_POSITION_LIMIT_PCT = 0.20
 
 
 ##### Risk Management Agent #####
@@ -42,16 +47,11 @@ def risk_management_agent(state: AgentState):
             progress.update_status("risk_management_agent", ticker, "Warning: Empty price data")
 
     # Calculate total portfolio value based on current market prices (Net Liquidation Value)
-    total_portfolio_value = portfolio.get("cash", 0.0)
-    
-    for ticker, position in portfolio.get("positions", {}).items():
-        if ticker in current_prices:
-            # Add market value of long positions
-            total_portfolio_value += position.get("long", 0) * current_prices[ticker]
-            # Subtract market value of short positions
-            total_portfolio_value -= position.get("short", 0) * current_prices[ticker]
-    
+    total_portfolio_value = net_liquidation_value(portfolio, current_prices)
+
     progress.update_status("risk_management_agent", None, f"Total portfolio value: {total_portfolio_value}")
+
+    position_limit_pct = state["metadata"].get("position_limit_pct", DEFAULT_POSITION_LIMIT_PCT)
 
     # Calculate risk limits for each ticker in the universe
     for ticker in tickers:
@@ -76,8 +76,8 @@ def risk_management_agent(state: AgentState):
         short_value = position.get("short", 0) * current_price
         current_position_value = abs(long_value - short_value)  # Use absolute exposure
         
-        # Calculate position limit (20% of total portfolio)
-        position_limit = total_portfolio_value * 0.20
+        # Calculate position limit (a configurable share of total portfolio)
+        position_limit = total_portfolio_value * position_limit_pct
         
         # Calculate remaining limit for this position
         remaining_position_limit = position_limit - current_position_value
