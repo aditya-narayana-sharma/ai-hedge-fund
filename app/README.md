@@ -62,11 +62,9 @@ poetry install
 
 6. Install backend app dependencies:
 ```bash
-# Navigate to the backend directory
-cd app/backend
-pip install -r requirements.txt  # If there's a requirements.txt file
-# OR
-poetry install  # If there's a pyproject.toml in the backend directory
+# Nothing extra to install. The backend has no pyproject.toml of its own —
+# `poetry install` in step 5 already covers it, because the root pyproject.toml
+# declares both `src` and `app` as packages.
 ```
 
 7. Install frontend app dependencies:
@@ -79,9 +77,10 @@ npm install  # or pnpm install or yarn install
 
 1. Start the backend server:
 ```bash
-# In one terminal, from the backend directory
-cd app/backend
-poetry run uvicorn main:app --reload
+# In one terminal, from the REPOSITORY ROOT (not app/backend).
+# app/backend/main.py imports `app.backend.routes`, which only resolves when the
+# repository root is the working directory.
+poetry run uvicorn app.backend.main:app --reload
 ```
 
 2. Start the frontend application:

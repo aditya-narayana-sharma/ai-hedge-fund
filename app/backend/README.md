@@ -53,11 +53,11 @@ FINANCIAL_DATASETS_API_KEY=your-financial-datasets-api-key
 To run the development server:
 
 ```bash
-# Navigate to the backend directory
-cd app/backend
-
-# Start the FastAPI server with uvicorn
-poetry run uvicorn main:app --reload
+# Run from the REPOSITORY ROOT, not from app/backend.
+# main.py imports `app.backend.routes`, so the root must be on sys.path;
+# `cd app/backend && uvicorn main:app` makes `app` unresolvable and loads
+# this module twice under two different names.
+poetry run uvicorn app.backend.main:app --reload
 ```
 
 This will start the FastAPI server with hot-reloading enabled.

@@ -246,16 +246,27 @@ if "!COMMAND!"=="compose" (
     exit /b 0
 )
 
-:: Check if .env file exists, if not create from .env.example
+:: Check if .env file exists, if not create it.
+:: Prefer .env.example as the template, but never hard-fail on its absence:
+:: the run scripts must not depend on a template file being present.
 if not exist .env (
     if exist .env.example (
         echo No .env file found. Creating from .env.example...
         copy .env.example .env
-        echo Please edit .env file to add your API keys.
     ) else (
-        echo Error: No .env or .env.example file found.
-        exit /b 1
+        echo No .env or .env.example file found. Creating an empty .env...
+        (
+            echo # Set at least one LLM provider key below, then re-run this command.
+            echo ANTHROPIC_API_KEY=
+            echo DEEPSEEK_API_KEY=
+            echo GROQ_API_KEY=
+            echo GOOGLE_API_KEY=
+            echo OPENAI_API_KEY=
+            echo # Optional: free for AAPL, GOOGL, MSFT, NVDA, TSLA without a key.
+            echo FINANCIAL_DATASETS_API_KEY=
+        ) > .env
     )
+    echo Please edit .env and add your API keys ^(at least one LLM provider^), then re-run.
 )
 
 :: Set script path and parameters based on command
