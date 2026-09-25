@@ -9,13 +9,7 @@ from pydantic import BaseModel
 from typing_extensions import Literal
 
 from src.graph.state import AgentState, show_agent_reasoning
-from src.tools.api import (
-    get_company_news,
-    get_financial_metrics,
-    get_insider_trades,
-    get_market_cap,
-    search_line_items,
-)
+from src.tools.api import get_company_news, get_financial_metrics, get_insider_trades, get_market_cap, search_line_items
 from src.utils.llm import call_llm
 from src.utils.progress import progress
 

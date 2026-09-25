@@ -18,6 +18,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # setup-python runs twice on purpose: `cache: poetry` needs poetry
+      # already on PATH to locate the virtualenv, and pipx needs a Python.
+      # This is the ordering GitHub documents for the Poetry cache.
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -29,6 +32,11 @@ jobs:
         with:
           python-version: '3.11'
           cache: poetry
+
+      # Fails loudly when poetry.lock is out of date with pyproject.toml,
+      # rather than surfacing as an opaque `poetry install` error.
+      - name: Check lock file
+        run: poetry check --lock
 
       - name: Install dependencies
         run: poetry install --no-interaction
