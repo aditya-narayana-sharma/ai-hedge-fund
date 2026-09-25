@@ -18,12 +18,15 @@ from src.tools.api import (
     get_insider_trades,
     get_price_data,
     get_prices,
+    publication_lag_note,
 )
 from src.utils.analysts import ANALYST_ORDER
 from src.utils.charts import plt, render_figure
 from src.utils.display import format_backtest_row, print_backtest_results
+from src.utils.llm import degraded_analyst_count, reset_degraded_analysts
 from src.utils.ollama import ensure_ollama_and_model
 from src.utils.progress import progress
+from src.utils.run_context import ensure_not_cancelled
 
 init(autoreset=True)
 
@@ -72,19 +75,26 @@ class Backtester:
         self.portfolio_values = []
         self.portfolio = create_portfolio(initial_capital, initial_margin_requirement, tickers)
 
-    def execute_trade(self, ticker: str, action: str, quantity: float, current_price: float):
+    def execute_trade(self, ticker: str, action: str, quantity: float, current_price: float, prices: dict | None = None):
         """
         Execute trades with support for both long and short positions.
         `quantity` is the number of shares the agent wants to buy/sell/short/cover.
         We will only trade integer shares to keep it simple.
         """
-        if quantity <= 0:
+        if quantity <= 0 or current_price <= 0:
             return 0
 
         quantity = int(quantity)  # force integer shares
         position = self.portfolio["positions"][ticker]
+        prices = dict(prices or {})
+        prices[ticker] = current_price
 
         if action == "buy":
+            # The 20% cap used to exist only as a number in the portfolio-manager
+            # prompt. A buy that ignores it is cut down here, before cash is spent.
+            quantity = min(quantity, self._shares_within_position_limit(ticker, current_price, prices))
+            if quantity <= 0:
+                return 0
             cost = quantity * current_price
             if cost <= self.portfolio["cash"]:
                 # Weighted average cost basis for the new total
@@ -143,7 +153,14 @@ class Backtester:
               1) Receive proceeds = current_price * quantity
               2) Post margin_required = proceeds * margin_ratio
               3) Net effect on cash = +proceeds - margin_required
+
+            ``margin_requirement`` defaults to 0, which makes the cash guard
+            ``0 <= cash`` and would otherwise allow an unbounded naked short.
+            The position limit is what binds in that case.
             """
+            quantity = min(quantity, self._shares_within_position_limit(ticker, current_price, prices))
+            if quantity <= 0:
+                return 0
             proceeds = current_price * quantity
             margin_required = proceeds * self.portfolio["margin_requirement"]
             if margin_required <= self.portfolio["cash"]:
@@ -206,6 +223,7 @@ class Backtester:
               3) Net effect on cash = -cover_cost + released_margin
             """
             quantity = min(quantity, position["short"])
+            quantity = min(quantity, self._affordable_cover_quantity(position, current_price))
             if quantity > 0:
                 cover_cost = quantity * current_price
                 avg_short_price = position["short_cost_basis"] if position["short"] > 0 else 0
@@ -222,9 +240,13 @@ class Backtester:
                 position["short_margin_used"] -= margin_to_release
                 self.portfolio["margin_used"] -= margin_to_release
 
-                # Pay the cost to cover, but get back the released margin
+                # Pay the cost to cover, but get back the released margin.
+                # The affordable-quantity cap above is what keeps cash from
+                # going negative; the clamp absorbs float dust only.
                 self.portfolio["cash"] += margin_to_release
                 self.portfolio["cash"] -= cover_cost
+                if self.portfolio["cash"] < 0 and self.portfolio["cash"] > -1e-6:
+                    self.portfolio["cash"] = 0.0
 
                 self.portfolio["realized_gains"][ticker]["short"] += realized_gain
 
@@ -235,6 +257,41 @@ class Backtester:
                 return quantity
 
         return 0
+
+    def _shares_within_position_limit(self, ticker: str, current_price: float, prices: dict[str, float]) -> int:
+        """How many shares can still be added before this name exceeds its cap.
+
+        The cap is a fraction of net liquidation value, measured on gross
+        exposure (long plus short), and floored at zero so a book that is
+        already over the limit or underwater cannot add risk.
+        """
+        if current_price <= 0:
+            return 0
+        nlv = net_liquidation_value(self.portfolio, prices)
+        if nlv <= 0:
+            return 0
+        position = self.portfolio["positions"][ticker]
+        gross = (position["long"] + position["short"]) * current_price
+        room = self.position_limit * nlv - gross
+        if room <= 0:
+            return 0
+        return int(room / current_price)
+
+    def _affordable_cover_quantity(self, position: dict, current_price: float) -> int:
+        """Shares that can be bought back without driving cash negative.
+
+        Covering ``q`` shares releases ``q / short * short_margin_used`` of
+        collateral and spends ``q * price``. When the price has risen past the
+        collateral per share, only the quantity cash can fund is filled.
+        """
+        short = position["short"]
+        if short <= 0 or current_price <= 0:
+            return 0
+        margin_per_share = position["short_margin_used"] / short
+        net_cash_per_share = current_price - margin_per_share
+        if net_cash_per_share <= 0:
+            return int(short)
+        return min(int(short), int(self.portfolio["cash"] / net_cash_per_share))
 
     def calculate_portfolio_value(self, current_prices):
         """Net liquidation value: cash + posted short margin + longs - shorts.
@@ -276,7 +333,9 @@ class Backtester:
         table_rows = []
         performance_metrics = {"sharpe_ratio": None, "sortino_ratio": None, "max_drawdown": None, "long_short_ratio": None, "gross_exposure": None, "net_exposure": None}
 
+        reset_degraded_analysts()
         print("\nStarting backtest...")
+        print(publication_lag_note())
 
         # Initialize portfolio values list with initial capital
         if len(dates) > 0:
@@ -285,6 +344,7 @@ class Backtester:
             self.portfolio_values = []
 
         for day_index, current_date in enumerate(dates, start=1):
+            ensure_not_cancelled()
             lookback_start = (current_date - timedelta(days=30)).strftime("%Y-%m-%d")
             current_date_str = current_date.strftime("%Y-%m-%d")
             previous_date_str = (current_date - timedelta(days=1)).strftime("%Y-%m-%d")
@@ -337,8 +397,10 @@ class Backtester:
                 selected_analysts=self.selected_analysts,
                 position_limit=self.position_limit,
             )
-            decisions = output["decisions"]
-            analyst_signals = output["analyst_signals"]
+            # A non-JSON model reply is ``None``. Treating it as an empty book
+            # makes the day a no-op instead of aborting the whole backtest.
+            decisions = output.get("decisions") or {}
+            analyst_signals = output.get("analyst_signals") or {}
 
             # Execute trades for each ticker
             executed_trades = {}
@@ -346,7 +408,7 @@ class Backtester:
                 decision = decisions.get(ticker, {"action": "hold", "quantity": 0})
                 action, quantity = decision.get("action", "hold"), decision.get("quantity", 0)
 
-                executed_quantity = self.execute_trade(ticker, action, quantity, current_prices[ticker])
+                executed_quantity = self.execute_trade(ticker, action, quantity, current_prices[ticker], current_prices)
                 executed_trades[ticker] = executed_quantity
 
             # ---------------------------------------------------------------
@@ -628,6 +690,8 @@ class Backtester:
 
         print(f"Max Consecutive Wins: {Fore.GREEN}{summary['max_consecutive_wins']}{Style.RESET_ALL}")
         print(f"Max Consecutive Losses: {Fore.RED}{summary['max_consecutive_losses']}{Style.RESET_ALL}")
+        degraded = degraded_analyst_count()
+        print(f"Degraded analysts: {Fore.RED if degraded else Fore.GREEN}{degraded}{Style.RESET_ALL} (LLM calls that fell back to neutral)")
 
         return performance_df
 

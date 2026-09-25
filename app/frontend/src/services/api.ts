@@ -18,6 +18,15 @@ interface RunRequest {
   prompt?: string;
 }
 
+/** Map a free-text progress status onto the canvas vocabulary. */
+function progressNodeStatus(status: string): NodeStatus {
+  if (status === 'Done') return 'COMPLETE';
+  if (status.startsWith('Failed:') || status.startsWith('Warning:') || status.startsWith('Error')) {
+    return 'ERROR';
+  }
+  return 'IN_PROGRESS';
+}
+
 /** A cancelled fetch rejects with an AbortError; that is expected, not a failure. */
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === 'AbortError';
@@ -107,51 +116,58 @@ export const api = {
     const fail = (message: string) => {
       console.error('Hedge fund run failed:', message);
       nodeContext.setRunError(message);
-      nodeContext.updateAgentNodes(params.selected_agents || [], 'ERROR');
+      nodeContext.settleRun(params.selected_agents || [], 'ERROR');
     };
 
     (async () => {
-      const response = await postJson('/hedge-fund/run', params, controller.signal);
+      nodeContext.setIsRunning(true);
+      try {
+        const response = await postJson('/hedge-fund/run', params, controller.signal);
 
-      await readEventStream(response, ({ type, data }) => {
-        switch (type) {
-          case 'start':
-            nodeContext.resetAllNodes();
-            break;
+        await readEventStream(response, ({ type, data }) => {
+          switch (type) {
+            case 'start':
+              nodeContext.resetAllNodes();
+              nodeContext.setIsRunning(true);
+              break;
 
-          case 'progress': {
-            const agent = data.agent as string | undefined;
-            if (!agent) break;
-            nodeContext.updateAgentNode(statusKeyForAgent(agent), {
-              status: data.status === 'Done' ? 'COMPLETE' : ('IN_PROGRESS' as NodeStatus),
-              ticker: (data.ticker as string | null) ?? null,
-              message: data.status as string,
-              timestamp: data.timestamp as string | undefined,
-            });
-            break;
-          }
-
-          case 'complete':
-            if (data.data) {
-              nodeContext.setOutputNodeData(data.data as OutputNodeData);
+            case 'progress': {
+              const agent = data.agent as string | undefined;
+              if (!agent) break;
+              const status = String(data.status ?? '');
+              nodeContext.updateAgentNode(statusKeyForAgent(agent), {
+                status: progressNodeStatus(status),
+                ticker: (data.ticker as string | null) ?? null,
+                message: status,
+                timestamp: data.timestamp as string | undefined,
+              });
+              break;
             }
-            nodeContext.updateAgentNodes(params.selected_agents || [], 'COMPLETE');
-            nodeContext.updateAgentNode(OUTPUT_KEY, {
-              status: 'COMPLETE',
-              message: 'Analysis complete',
-            });
-            break;
 
-          case 'error':
-            // The backend now reports why a run died instead of just closing
-            // the stream, so the message can reach the user.
-            fail((data.message as string) || 'The run failed without a message.');
-            break;
+            case 'complete':
+              if (data.data) {
+                nodeContext.setOutputNodeData(data.data as OutputNodeData);
+              }
+              nodeContext.settleRun(params.selected_agents || [], 'COMPLETE');
+              nodeContext.updateAgentNode(OUTPUT_KEY, {
+                status: 'COMPLETE',
+                message: 'Analysis complete',
+              });
+              break;
 
-          default:
-            console.warn('Unknown event type:', type);
-        }
-      });
+            case 'error':
+              // The backend now reports why a run died instead of just closing
+              // the stream, so the message can reach the user.
+              fail((data.message as string) || 'The run failed without a message.');
+              break;
+
+            default:
+              console.warn('Unknown event type:', type);
+          }
+        });
+      } finally {
+        nodeContext.setIsRunning(false);
+      }
     })().catch((error: unknown) => {
       if (isAbortError(error)) return;
       fail(describe(error));
@@ -174,44 +190,51 @@ export const api = {
     const fail = (message: string) => {
       console.error('Backtest failed:', message);
       nodeContext.setRunError(message);
-      nodeContext.updateAgentNodes(params.selected_agents || [], 'ERROR');
+      nodeContext.settleRun(params.selected_agents || [], 'ERROR');
     };
 
     (async () => {
-      const response = await postJson('/backtest', params, controller.signal);
+      nodeContext.setIsRunning(true);
+      try {
+        const response = await postJson('/backtest', params, controller.signal);
 
-      await readEventStream(response, ({ type, data }) => {
-        switch (type) {
-          case 'start':
-            nodeContext.resetAllNodes();
-            break;
+        await readEventStream(response, ({ type, data }) => {
+          switch (type) {
+            case 'start':
+              nodeContext.resetAllNodes();
+              nodeContext.setIsRunning(true);
+              break;
 
-          case 'progress': {
-            const agent = data.agent as string | undefined;
-            if (!agent) break;
-            nodeContext.updateAgentNode(statusKeyForAgent(agent), {
-              status: data.status === 'Done' ? 'COMPLETE' : ('IN_PROGRESS' as NodeStatus),
-              ticker: (data.ticker as string | null) ?? null,
-              message: data.status as string,
-              timestamp: data.timestamp as string | undefined,
-            });
-            break;
+            case 'progress': {
+              const agent = data.agent as string | undefined;
+              if (!agent) break;
+              const status = String(data.status ?? '');
+              nodeContext.updateAgentNode(statusKeyForAgent(agent), {
+                status: progressNodeStatus(status),
+                ticker: (data.ticker as string | null) ?? null,
+                message: status,
+                timestamp: data.timestamp as string | undefined,
+              });
+              break;
+            }
+
+            case 'complete':
+              nodeContext.settleRun(params.selected_agents || [], 'COMPLETE');
+              nodeContext.updateAgentNode(OUTPUT_KEY, { status: 'COMPLETE', message: 'Backtest complete' });
+              onResult(data.data as unknown as BacktestResult);
+              break;
+
+            case 'error':
+              fail((data.message as string) || 'The backtest failed without a message.');
+              break;
+
+            default:
+              console.warn('Unknown event type:', type);
           }
-
-          case 'complete':
-            nodeContext.updateAgentNodes(params.selected_agents || [], 'COMPLETE');
-            nodeContext.updateAgentNode(OUTPUT_KEY, { status: 'COMPLETE', message: 'Backtest complete' });
-            onResult(data.data as unknown as BacktestResult);
-            break;
-
-          case 'error':
-            fail((data.message as string) || 'The backtest failed without a message.');
-            break;
-
-          default:
-            console.warn('Unknown event type:', type);
-        }
-      });
+        });
+      } finally {
+        nodeContext.setIsRunning(false);
+      }
     })().catch((error: unknown) => {
       if (isAbortError(error)) return;
       fail(describe(error));

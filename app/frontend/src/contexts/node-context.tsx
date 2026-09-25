@@ -38,6 +38,11 @@ interface NodeContextType {
   outputNodeData: OutputNodeData | null;
   /** Message from the SSE `error` event, or a transport failure. */
   runError: string | null;
+  /** Owned by the request, not by scanning node status. Cleared on every terminal path. */
+  isRunning: boolean;
+  setIsRunning: (running: boolean) => void;
+  /** Finish a run without leaving an unrecognised progress key stuck IN_PROGRESS. */
+  settleRun: (selectedAgentKeys: string[], outcome: 'COMPLETE' | 'ERROR') => void;
   updateAgentNode: (nodeId: string, data: Partial<AgentNodeData> | NodeStatus) => void;
   updateAgentNodes: (nodeIds: string[], status: NodeStatus) => void;
   setOutputNodeData: (data: OutputNodeData) => void;
@@ -51,6 +56,24 @@ export function NodeProvider({ children }: { children: ReactNode }) {
   const [agentNodeData, setAgentNodeData] = useState<Record<string, AgentNodeData>>({});
   const [outputNodeData, setOutputNodeData] = useState<OutputNodeData | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
+  const [isRunning, setIsRunning] = useState(false);
+
+  const settleRun = useCallback((selectedAgentKeys: string[], outcome: 'COMPLETE' | 'ERROR') => {
+    const selected = new Set(selectedAgentKeys);
+    setIsRunning(false);
+    setAgentNodeData((prev) => {
+      const next: Record<string, AgentNodeData> = { ...prev };
+      for (const [key, value] of Object.entries(next)) {
+        // An analyst that reported Failed/Warning stays red on an otherwise
+        // successful run. Blanket COMPLETE used to paint over that.
+        if (value.status === 'ERROR') continue;
+        if (selected.has(key) || value.status === 'IN_PROGRESS') {
+          next[key] = { ...value, status: outcome, lastUpdated: Date.now() };
+        }
+      }
+      return next;
+    });
+  }, []);
 
   const updateAgentNode = useCallback((nodeId: string, data: Partial<AgentNodeData> | NodeStatus) => {
     // Handle string status shorthand (just passing a status string)
@@ -117,6 +140,7 @@ export function NodeProvider({ children }: { children: ReactNode }) {
     setAgentNodeData({});
     setOutputNodeData(null);
     setRunError(null);
+    setIsRunning(false);
   }, []);
 
   return (
@@ -125,6 +149,9 @@ export function NodeProvider({ children }: { children: ReactNode }) {
         agentNodeData,
         outputNodeData,
         runError,
+        isRunning,
+        setIsRunning,
+        settleRun,
         updateAgentNode,
         updateAgentNodes,
         setOutputNodeData,

@@ -14,6 +14,7 @@ back to the process-wide instances, which is exactly what the CLI wants.
 """
 
 import contextvars
+import threading
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -25,6 +26,10 @@ from src.data.cache import Cache, get_cache
 ProgressHandler = Callable[[str, Optional[str], str, str], None]
 
 
+class RunCancelled(Exception):
+    """The client went away and the worker should stop spending on this run."""
+
+
 @dataclass
 class RunContext:
     """Everything one hedge-fund run must not share with another."""
@@ -33,6 +38,11 @@ class RunContext:
     cache: Cache
     handlers: list[ProgressHandler] = field(default_factory=list)
     agent_status: dict[str, dict[str, str]] = field(default_factory=dict)
+    cancelled: threading.Event = field(default_factory=threading.Event)
+
+    def request_cancel(self) -> None:
+        """Ask the worker to stop at its next progress update or day boundary."""
+        self.cancelled.set()
 
     def register_handler(self, handler: ProgressHandler) -> ProgressHandler:
         self.handlers.append(handler)
@@ -62,6 +72,13 @@ def current_run() -> Optional[RunContext]:
 def current_run_id() -> Optional[str]:
     run = current_run()
     return run.run_id if run else None
+
+
+def ensure_not_cancelled() -> None:
+    """Raise :class:`RunCancelled` when the active run has been disconnected."""
+    run = current_run()
+    if run is not None and run.cancelled.is_set():
+        raise RunCancelled(f"Run {run.run_id} was cancelled")
 
 
 def resolve_cache() -> Cache:

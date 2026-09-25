@@ -1,5 +1,7 @@
 """Helper functions for LLM"""
 
+import os
+import time
 from typing import Any, Optional, Type, TypeVar
 
 from pydantic import BaseModel
@@ -9,6 +11,39 @@ from src.utils.json_parsing import extract_json_from_response
 from src.utils.progress import progress
 
 T = TypeVar("T", bound=BaseModel)
+
+# How many analyst calls in this process fell back to a neutral default.
+# Reset at the start of a run; printed on the summary line.
+_degraded_analysts = 0
+
+
+def reset_degraded_analysts() -> None:
+    """Zero the degraded-analyst counter. Call once per run."""
+    global _degraded_analysts
+    _degraded_analysts = 0
+
+
+def degraded_analyst_count() -> int:
+    """Analyst calls that failed and were replaced with a neutral fallback."""
+    return _degraded_analysts
+
+
+def _note_degraded_analyst() -> None:
+    global _degraded_analysts
+    _degraded_analysts += 1
+
+
+def _backoff_seconds(attempt: int) -> float:
+    """Exponential delay before retry ``attempt`` (0-based).
+
+    ``AI_HEDGE_FUND_LLM_BACKOFF_SECONDS=0`` disables the sleep, which tests use.
+    """
+    raw = os.environ.get("AI_HEDGE_FUND_LLM_BACKOFF_SECONDS", "0.5")
+    try:
+        base = max(0.0, float(raw))
+    except ValueError:
+        base = 0.5
+    return base * (2**attempt)
 
 
 def call_llm(
@@ -67,10 +102,18 @@ def call_llm(
             if attempt == max_retries - 1:
                 print(f"Error in LLM call after {max_retries} attempts: {e}")
                 break
+            delay = _backoff_seconds(attempt)
+            if delay:
+                time.sleep(delay)
 
     # Every attempt either raised or produced unparseable output. Both paths
     # must honour the caller's fallback; previously only the exception path did,
-    # so a parse failure silently discarded default_factory.
+    # so a parse failure silently discarded default_factory. The fallback is a
+    # neutral signal, so it has to be counted or the summary reads "14 neutral
+    # analysts" for a run where every call failed.
+    _note_degraded_analyst()
+    if agent_name:
+        progress.update_status(agent_name, None, "Failed: LLM call failed")
     if default_factory:
         return default_factory()
     return create_default_response(pydantic_model)

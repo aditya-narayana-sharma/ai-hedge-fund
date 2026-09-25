@@ -18,6 +18,7 @@ from src.llm.models import get_model_info, LLM_ORDER, ModelProvider, OLLAMA_LLM_
 from src.utils.analysts import ANALYST_ORDER, get_analyst_nodes
 from src.utils.display import print_trading_output
 from src.utils.json_parsing import parse_hedge_fund_response
+from src.utils.llm import reset_degraded_analysts
 from src.utils.ollama import ensure_ollama_and_model
 from src.utils.progress import progress
 from src.utils.visualize import save_graph_as_png
@@ -305,6 +306,7 @@ if __name__ == "__main__":
     portfolio = create_portfolio(args.initial_cash, args.margin_requirement, tickers)
 
     # Run the hedge fund
+    reset_degraded_analysts()
     result = run_hedge_fund(
         tickers=tickers,
         start_date=start_date,

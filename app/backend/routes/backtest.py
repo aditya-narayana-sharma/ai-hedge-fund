@@ -25,9 +25,6 @@ async def run_backtest(request: BacktestRequest):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    if request.get_start_date() >= request.end_date:
-        raise HTTPException(status_code=400, detail="start_date must be earlier than end_date.")
-
     graph = create_graph(selected_agents).compile()
     backtester = build_backtester(request, graph)
 
@@ -37,13 +34,12 @@ async def run_backtest(request: BacktestRequest):
     def to_payload(completed) -> dict:
         return to_response(request.run_id, completed).model_dump()
 
-    record_started("backtest", request)
-
     return StreamingResponse(
         sse_run_stream(
             request.run_id,
             runner,
             to_payload,
+            on_start=lambda: record_started("backtest", request),
             on_complete=lambda payload: record_finished(request.run_id, result=payload),
             on_error=lambda message: record_finished(request.run_id, error=message),
         ),

@@ -15,13 +15,8 @@ export function TextOutputNode({
   id,
   isConnectable,
 }: NodeProps<TextOutputNode>) {  
-  const { outputNodeData, agentNodeData } = useNodeContext();
+  const { outputNodeData, isRunning } = useNodeContext();
   const [showOutput, setShowOutput] = useState(false);
-  
-  // Check if any agent is in progress
-  const isProcessing = Object.values(agentNodeData).some(
-    agent => agent.status === 'IN_PROGRESS'
-  );
   
   const isOutputAvailable = !!outputNodeData;
 
@@ -47,7 +42,7 @@ export function TextOutputNode({
                 Results
               </div>
               <div className="flex gap-2">
-                {isProcessing ? (
+                {isRunning ? (
                   <Button 
                     variant="secondary"
                     className="w-full flex-shrink-0 transition-all duration-200 hover:bg-primary hover:text-primary-foreground active:scale-95 text-subtitle"

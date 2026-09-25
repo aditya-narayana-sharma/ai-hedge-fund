@@ -1,7 +1,3 @@
 node_modules
 dist
-dist-ssr
-.env
-.env.local
-*.log
-.DS_Store
+.github

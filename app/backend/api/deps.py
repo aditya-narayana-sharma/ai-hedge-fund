@@ -62,11 +62,17 @@ async def enforce_rate_limit(request: Request, x_api_key: str | None = Header(de
 
     window = _configured_window()
     now = time.monotonic()
-    client_key = x_api_key or (request.client.host if request.client else "unknown")
+    # The header is a bucket id only after it has been checked against the
+    # configured secret. Otherwise any caller rotates X-API-Key and gets a
+    # fresh bucket, and the dict grows without bound.
+    expected = os.environ.get(API_KEY_ENV_VAR)
+    if expected and x_api_key == expected:
+        client_key = f"key:{x_api_key}"
+    else:
+        client_key = request.client.host if request.client else "unknown"
 
+    _evict_stale_buckets(now, window)
     timestamps = _request_log[client_key]
-    while timestamps and now - timestamps[0] > window:
-        timestamps.popleft()
 
     if len(timestamps) >= limit:
         retry_after = max(1, int(window - (now - timestamps[0])))
@@ -77,6 +83,18 @@ async def enforce_rate_limit(request: Request, x_api_key: str | None = Header(de
         )
 
     timestamps.append(now)
+
+
+def _evict_stale_buckets(now: float, window: float) -> None:
+    """Drop timestamps outside the window, and drop buckets that are then empty."""
+    empty = []
+    for key, timestamps in _request_log.items():
+        while timestamps and now - timestamps[0] > window:
+            timestamps.popleft()
+        if not timestamps:
+            empty.append(key)
+    for key in empty:
+        del _request_log[key]
 
 
 def reset_rate_limits() -> None:

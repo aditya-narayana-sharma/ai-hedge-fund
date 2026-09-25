@@ -112,7 +112,7 @@ class TestRequestValidation:
                 "end_date": "2024-01-01",
             },
         )
-        assert response.status_code == 400
+        assert response.status_code == 422
 
 
 class TestStreaming:
@@ -137,13 +137,63 @@ class TestStreaming:
         # Every event is addressable to its run.
         assert all(payload.get("run_id") for _, payload in events)
 
-    def test_the_run_id_is_echoed_on_the_response_and_every_event(self, client):
+    def test_the_server_assigns_and_echoes_the_run_id(self, client):
         response = client.post(
             "/hedge-fund/run",
-            json={"tickers": ["NOPE"], "selected_agents": ["warren_buffett"], "run_id": "test-run-123"},
+            json={"tickers": ["NOPE"], "selected_agents": ["warren_buffett"]},
         )
-        assert response.headers["X-Run-Id"] == "test-run-123"
-        assert all(payload.get("run_id") == "test-run-123" for _, payload in parse_sse(response.text))
+        run_id = response.headers["X-Run-Id"]
+        assert run_id
+        assert all(payload.get("run_id") == run_id for _, payload in parse_sse(response.text))
+
+    def test_a_client_supplied_run_id_is_rejected(self, client):
+        response = client.post(
+            "/hedge-fund/run",
+            json={"tickers": ["AAPL"], "selected_agents": ["warren_buffett"], "run_id": "shared-id"},
+        )
+        assert response.status_code == 422
+
+    def test_a_malformed_end_date_is_rejected(self, client):
+        response = client.post(
+            "/hedge-fund/run",
+            json={"tickers": ["AAPL"], "selected_agents": ["warren_buffett"], "end_date": "not-a-date"},
+        )
+        assert response.status_code == 422
+
+    def test_an_inverted_hedge_fund_range_is_rejected(self, client):
+        response = client.post(
+            "/hedge-fund/run",
+            json={
+                "tickers": ["AAPL"],
+                "selected_agents": ["warren_buffett"],
+                "start_date": "2024-06-01",
+                "end_date": "2024-01-01",
+            },
+        )
+        assert response.status_code == 422
+
+    def test_an_unbounded_date_range_is_rejected(self, client):
+        response = client.post(
+            "/backtest",
+            json={
+                "tickers": ["AAPL"],
+                "selected_agents": ["warren_buffett"],
+                "start_date": "1900-01-01",
+                "end_date": "2020-01-01",
+            },
+        )
+        assert response.status_code == 422
+
+    def test_rotating_the_api_key_header_does_not_bypass_the_limiter(self, client, monkeypatch):
+        monkeypatch.delenv(API_KEY_ENV_VAR, raising=False)
+        monkeypatch.setenv(RATE_LIMIT_ENV_VAR, "2")
+        reset_rate_limits()
+
+        body = {"tickers": ["AAPL"], "selected_agents": ["nope"]}
+        for index in range(2):
+            assert client.post("/hedge-fund/run", json=body, headers={"X-API-Key": f"junk-{index}"}).status_code == 400
+        throttled = client.post("/hedge-fund/run", json=body, headers={"X-API-Key": "junk-99"})
+        assert throttled.status_code == 429
 
 
 class TestAuthAndRateLimiting:

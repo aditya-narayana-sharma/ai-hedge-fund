@@ -5,6 +5,7 @@ from colorama import Fore, Style
 from tabulate import tabulate
 
 from .analysts import ANALYST_ORDER
+from .llm import degraded_analyst_count
 
 
 def sort_agent_signals(signals):
@@ -26,6 +27,7 @@ def print_trading_output(result: dict) -> None:
     decisions = result.get("decisions")
     if not decisions:
         print(f"{Fore.RED}No trading decisions available{Style.RESET_ALL}")
+        _print_degraded_analysts()
         return
 
     # Print decisions for each ticker
@@ -226,6 +228,15 @@ def print_trading_output(result: dict) -> None:
 
         print(f"\n{Fore.WHITE}{Style.BRIGHT}Portfolio Strategy:{Style.RESET_ALL}")
         print(f"{Fore.CYAN}{wrapped_reasoning}{Style.RESET_ALL}")
+
+    _print_degraded_analysts()
+
+
+def _print_degraded_analysts() -> None:
+    """Say how many analyst calls failed, so a neutral book is not silent."""
+    degraded = degraded_analyst_count()
+    color = Fore.RED if degraded else Fore.GREEN
+    print(f"\n{color}Degraded analysts: {degraded}{Style.RESET_ALL} (LLM calls that fell back to neutral)")
 
 
 def print_backtest_results(table_rows: list) -> None:

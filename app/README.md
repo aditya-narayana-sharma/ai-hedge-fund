@@ -70,7 +70,7 @@ poetry install
 7. Install frontend app dependencies:
 ```bash
 cd app/frontend
-npm install  # or pnpm install or yarn install
+npm install  # npm is the package manager this repo's lockfile and CI use
 ```
 
 ### Running the Application

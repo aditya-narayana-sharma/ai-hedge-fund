@@ -7,7 +7,7 @@ from rich.style import Style
 from rich.table import Table
 from rich.text import Text
 
-from src.utils.run_context import current_run
+from src.utils.run_context import current_run, ensure_not_cancelled
 
 console = Console()
 
@@ -61,6 +61,10 @@ class AgentProgress:
         one (the CLI) this falls back to the process-wide state and repaints
         the live table.
         """
+        # Cooperative cancellation: a disconnected client sets the flag, and
+        # the next status update (which every agent emits) stops the thread
+        # ``asyncio.to_thread`` itself cannot interrupt.
+        ensure_not_cancelled()
         run = current_run()
         store = run.agent_status if run is not None else self.agent_status
 

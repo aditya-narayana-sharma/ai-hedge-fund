@@ -10,6 +10,7 @@ from src.graph.state import AgentState
 from src.main import start
 from src.utils.analysts import ANALYST_CONFIG
 from src.utils.json_parsing import parse_hedge_fund_response  # noqa: F401  (re-exported for routes)
+from src.utils.llm import reset_degraded_analysts
 
 
 class UnknownAgentsError(ValueError):
@@ -131,6 +132,7 @@ def run_graph(
     start date, end date, show reasoning, model name,
     and model provider.
     """
+    reset_degraded_analysts()
     return graph.invoke(
         {
             "messages": [

@@ -29,6 +29,9 @@ ENV/
 # Environment Variables
 .env
 
+# Equity-curve charts written by the Docker output volume
+output/
+
 # IDE
 .idea/
 .vscode/

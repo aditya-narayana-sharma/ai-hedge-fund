@@ -8,6 +8,12 @@ __pycache__/
 *.py[cod]
 *$py.class
 .pytest_cache/
+.mypy_cache/
+
+# The Python image does not run the canvas. Leaving these in the context
+# copies hundreds of megabytes and busts the COPY layer on every npm install.
+node_modules/
+dist/
 
 # Environment
 .env

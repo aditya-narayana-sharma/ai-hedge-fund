@@ -35,13 +35,11 @@ export function TextInputNode({
   const [localError, setLocalError] = useState<string | null>(null);
 
   const nodeContext = useNodeContext();
-  const { resetAllNodes, agentNodeData, runError } = nodeContext;
+  const { resetAllNodes, runError, isRunning } = nodeContext;
   const { models, defaultModel, isLoading: catalogLoading, error: catalogError } = useCatalog();
   const { getNodes, getEdges } = useReactFlow();
   const abortRef = useRef<(() => void) | null>(null);
   const tickerFileRef = useRef<HTMLInputElement>(null);
-
-  const isProcessing = Object.values(agentNodeData).some((agent) => agent.status === 'IN_PROGRESS');
 
   // Adopt the catalog's default once it arrives, without clobbering a choice
   // the user has already made.
@@ -198,9 +196,9 @@ export function TextInputNode({
                     variant="secondary"
                     className="flex-shrink-0 transition-all duration-200 hover:bg-primary hover:text-primary-foreground active:scale-95"
                     onClick={handlePlay}
-                    disabled={isProcessing || !tickers.trim() || catalogLoading}
+                    disabled={isRunning || !tickers.trim() || catalogLoading}
                   >
-                    {isProcessing ? (
+                    {isRunning ? (
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />
                     ) : (
                       <Play className="h-3.5 w-3.5" />
