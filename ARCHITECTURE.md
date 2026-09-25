@@ -212,5 +212,5 @@ Mermaid source if neither renderer is available.
 construction — the property that keeps the `App.tsx` import-casing regression
 from returning.
 
-- Python: `flake8`, `black --check`, `isort --check-only`, `mypy`, `pytest`
+- Python: `flake8`, `black --check`, `isort --check-only`, `mypy` (scoped; see `[tool.mypy]` in `pyproject.toml`), `pytest`
 - Frontend: `npm ci`, `npm run lint`, `npm run build`

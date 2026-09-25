@@ -65,16 +65,19 @@ def risk_management_agent(state: AgentState):
         position = portfolio.get("positions", {}).get(ticker, {})
         long_value = position.get("long", 0) * current_price
         short_value = position.get("short", 0) * current_price
-        current_position_value = abs(long_value - short_value)  # Use absolute exposure
+        # Gross, not net: a paired long and short has no net exposure and
+        # still carries the full borrow and gap risk.
+        current_position_value = long_value + short_value
 
-        # Calculate position limit (a configurable share of total portfolio)
-        position_limit = total_portfolio_value * position_limit_pct
+        # A negative NLV (an underwater short book) must not produce a
+        # negative "maximum shares" figure in the portfolio-manager prompt.
+        position_limit = max(0.0, total_portfolio_value) * position_limit_pct
 
-        # Calculate remaining limit for this position
-        remaining_position_limit = position_limit - current_position_value
+        remaining_position_limit = max(0.0, position_limit - current_position_value)
 
-        # Ensure we don't exceed available cash
-        max_position_size = min(remaining_position_limit, portfolio.get("cash", 0))
+        # Shorts generate cash, so the cap is the position limit itself.
+        # Buys are still cash-constrained inside execute_trade.
+        max_position_size = remaining_position_limit
 
         risk_analysis[ticker] = {
             "remaining_position_limit": float(max_position_size),

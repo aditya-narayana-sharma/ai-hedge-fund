@@ -14,6 +14,12 @@ set SHOW_REASONING=
 set ANALYSTS=--analysts-all
 set COMMAND=
 set MODEL_NAME=
+set POSITION_LIMIT=
+set CHART_OUTPUT=
+
+:: The help label is a no-op when execution falls into it, and the goto :eof
+:: below then terminates the file. Jump to the real entry point first.
+goto :entry
 
 :: Help function
 :show_help
@@ -31,12 +37,15 @@ echo   --ollama            Use Ollama for local LLM inference
 echo   --show-reasoning    Show reasoning from each agent
 echo   --analysts LIST     Comma-separated analysts (e.g., warren_buffett,michael_burry)
 echo   --analysts-all      Use every available analyst (overrides --analysts)
+echo   --position-limit R  Max fraction of portfolio value per position (default: 0.2)
+echo   --chart-output PATH Write the equity curve to this file (Docker writes under .\output)
 echo.
 echo Commands:
 echo   main                Run the main hedge fund application
 echo   backtest            Run the backtester
 echo   build               Build the Docker image
 echo   compose             Run using Docker Compose with integrated Ollama
+echo   web                 Run the backend API and the canvas (http://localhost:5173)
 echo   ollama              Start only the Ollama container for model management
 echo   pull MODEL          Pull a specific model into the Ollama container
 echo   help                Show this help message
@@ -105,6 +114,18 @@ if "%~1"=="--analysts-all" (
     shift
     goto :parse_args
 )
+if "%~1"=="--position-limit" (
+    set POSITION_LIMIT=%~2
+    shift
+    shift
+    goto :parse_args
+)
+if "%~1"=="--chart-output" (
+    set CHART_OUTPUT=%~2
+    shift
+    shift
+    goto :parse_args
+)
 if "%~1"=="main" (
     set COMMAND=main
     shift
@@ -122,6 +143,11 @@ if "%~1"=="build" (
 )
 if "%~1"=="compose" (
     set COMMAND=compose
+    shift
+    goto :parse_args
+)
+if "%~1"=="web" (
+    set COMMAND=web
     shift
     goto :parse_args
 )
@@ -175,6 +201,10 @@ if !ERRORLEVEL! EQU 0 (
         exit /b 1
     )
 )
+
+:: Compose refuses to start when env_file points at a missing file.
+call :ensure_dotenv
+if not exist output mkdir output
 
 :: Build the Docker image if 'build' command is provided
 if "!COMMAND!"=="build" (
@@ -262,27 +292,14 @@ if "!COMMAND!"=="compose" (
     exit /b 0
 )
 
-:: Check if .env file exists, if not create it.
-:: Prefer .env.example as the template, but never hard-fail on its absence:
-:: the run scripts must not depend on a template file being present.
-if not exist .env (
-    if exist .env.example (
-        echo No .env file found. Creating from .env.example...
-        copy .env.example .env
-    ) else (
-        echo No .env or .env.example file found. Creating an empty .env...
-        (
-            echo # Set at least one LLM provider key below, then re-run this command.
-            echo ANTHROPIC_API_KEY=
-            echo DEEPSEEK_API_KEY=
-            echo GROQ_API_KEY=
-            echo GOOGLE_API_KEY=
-            echo OPENAI_API_KEY=
-            echo # Optional: free for AAPL, GOOGL, MSFT, NVDA, TSLA without a key.
-            echo FINANCIAL_DATASETS_API_KEY=
-        ) > .env
-    )
-    echo Please edit .env and add your API keys ^(at least one LLM provider^), then re-run.
+:: Backend API and canvas together
+if "!COMMAND!"=="web" (
+    echo Starting the backend API and the canvas...
+    echo   Canvas:  http://localhost:5173
+    echo   API:     http://localhost:8000
+    echo   Docs:    http://localhost:8000/docs
+    !COMPOSE_CMD! up --build backend frontend
+    exit /b 0
 )
 
 :: Set script path and parameters based on command
@@ -350,6 +367,14 @@ if not "!USE_OLLAMA!"=="" (
     if not "!ANALYSTS!"=="" (
         set COMMAND_OVERRIDE=!COMMAND_OVERRIDE! !ANALYSTS!
     )
+
+    if not "!POSITION_LIMIT!"=="" (
+        set COMMAND_OVERRIDE=!COMMAND_OVERRIDE! --position-limit !POSITION_LIMIT!
+    )
+
+    if not "!CHART_OUTPUT!"=="" (
+        set COMMAND_OVERRIDE=!COMMAND_OVERRIDE! --chart-output /output/!CHART_OUTPUT!
+    )
     
     :: Run the command with Docker Compose
     echo Running AI Hedge Fund with Ollama using Docker Compose...
@@ -357,12 +382,12 @@ if not "!USE_OLLAMA!"=="" (
     :: Use the appropriate service based on command and reasoning flag
     if "!COMMAND!"=="main" (
         if not "!SHOW_REASONING!"=="" (
-            !COMPOSE_CMD! run --rm hedge-fund-reasoning python src/main.py --ticker !TICKER! !COMMAND_OVERRIDE! !SHOW_REASONING! --ollama
+            !COMPOSE_CMD! run --rm -v "%cd%\output:/output" hedge-fund-reasoning python src/main.py --ticker !TICKER! !COMMAND_OVERRIDE! !SHOW_REASONING! --ollama
         ) else (
-            !COMPOSE_CMD! run --rm hedge-fund-ollama python src/main.py --ticker !TICKER! !COMMAND_OVERRIDE! --ollama
+            !COMPOSE_CMD! run --rm -v "%cd%\output:/output" hedge-fund-ollama python src/main.py --ticker !TICKER! !COMMAND_OVERRIDE! --ollama
         )
     ) else if "!COMMAND!"=="backtest" (
-        !COMPOSE_CMD! run --rm backtester-ollama python src/backtester.py --ticker !TICKER! !COMMAND_OVERRIDE! !SHOW_REASONING! --ollama
+        !COMPOSE_CMD! run --rm -v "%cd%\output:/output" backtester-ollama python src/backtester.py --ticker !TICKER! !COMMAND_OVERRIDE! !SHOW_REASONING! --ollama
     )
     
     exit /b 0
@@ -370,10 +395,13 @@ if not "!USE_OLLAMA!"=="" (
 
 :: Standard Docker run (without Ollama)
 :: Build the command
-set CMD=docker run -it --rm -v %cd%\.env:/app/.env
+set CMD=docker run -it --rm -v %cd%\.env:/app/.env -v %cd%\output:/output
 
 :: Add the command
-set CMD=!CMD! ai-hedge-fund python !SCRIPT_PATH! --ticker !TICKER! !START_DATE! !END_DATE! !INITIAL_PARAM! --margin-requirement !MARGIN_REQUIREMENT! !SHOW_REASONING! !ANALYSTS!
+set EXTRA_ARGS=
+if not "!POSITION_LIMIT!"=="" set EXTRA_ARGS=!EXTRA_ARGS! --position-limit !POSITION_LIMIT!
+if not "!CHART_OUTPUT!"=="" set EXTRA_ARGS=!EXTRA_ARGS! --chart-output /output/!CHART_OUTPUT!
+set CMD=!CMD! ai-hedge-fund python !SCRIPT_PATH! --ticker !TICKER! !START_DATE! !END_DATE! !INITIAL_PARAM! --margin-requirement !MARGIN_REQUIREMENT! !SHOW_REASONING! !ANALYSTS! !EXTRA_ARGS!
 
 :: Run the command
 echo Running: !CMD!
@@ -382,5 +410,27 @@ echo Running: !CMD!
 :: Exit
 exit /b 0
 
-:: Start script execution
-call :parse_args %* 
+:ensure_dotenv
+if exist .env goto :eof
+if exist .env.example (
+    echo No .env file found. Creating from .env.example...
+    copy .env.example .env
+) else (
+    echo No .env or .env.example file found. Creating an empty .env...
+    (
+        echo # Set at least one LLM provider key below, then re-run this command.
+        echo ANTHROPIC_API_KEY=
+        echo DEEPSEEK_API_KEY=
+        echo GROQ_API_KEY=
+        echo GOOGLE_API_KEY=
+        echo OPENAI_API_KEY=
+        echo # Optional: free for AAPL, GOOGL, MSFT, NVDA, TSLA without a key.
+        echo FINANCIAL_DATASETS_API_KEY=
+    ) > .env
+)
+echo Please edit .env and add your API keys ^(at least one LLM provider^), then re-run.
+goto :eof
+
+:entry
+call :parse_args %*
+exit /b !ERRORLEVEL! 

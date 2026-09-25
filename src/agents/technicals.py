@@ -497,8 +497,11 @@ def calculate_hurst_exponent(price_series: pd.Series, max_lag: int = 20) -> floa
         float: Hurst exponent
     """
     lags = range(2, max_lag)
-    # Add small epsilon to avoid log(0)
-    tau = [max(1e-8, np.sqrt(np.std(np.subtract(price_series[lag:], price_series[:-lag])))) for lag in lags]
+    # Positional, not index-aligned: a pandas Series subtracts on labels, so
+    # ``s[lag:] - s[:-lag]`` is identically zero. The std is the deviation
+    # itself — an extra sqrt would report H/2.
+    prices = np.asarray(price_series, dtype=float)
+    tau = [max(1e-8, float(np.std(prices[lag:] - prices[:-lag]))) for lag in lags]
 
     # Return the Hurst exponent from linear fit
     try:

@@ -83,14 +83,15 @@ services:
   frontend:
     build:
       context: ./app/frontend
+      args:
+        # Resolved by the browser, so it must be the host-published API port.
+        VITE_API_URL: http://localhost:8000
     image: ai-hedge-fund-frontend
     depends_on:
       - backend
-    environment:
-      # Resolved by the browser, so it must be the host-published port.
-      - VITE_API_URL=http://localhost:8000
     ports:
-      - "5173:5173"
+      # nginx listens on 80 inside the image; the canvas URL stays :5173.
+      - "5173:80"
     restart: unless-stopped
 
 volumes:

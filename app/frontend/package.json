@@ -1,6 +1,6 @@
 {
-  "name": "vite-react-flow-template",
-  "version": "0.0.0",
+  "name": "ai-hedge-fund",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",

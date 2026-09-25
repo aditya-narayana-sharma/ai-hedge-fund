@@ -50,8 +50,18 @@ jobs:
       - name: Import order (isort)
         run: poetry run isort --check-only src app tests
 
-      - name: Type check (mypy)
+      - name: Type check (mypy, scoped to pyproject files list)
         run: poetry run mypy
+
+      - name: Dependency audit (pip)
+        # The step always runs. It does not fail the job: the locked
+        # LangChain 0.3 / FastAPI 0.104 graph has known advisories whose
+        # fixes are major upgrades, which this workflow does not take.
+        # Root .github/dependabot.yml is what tracks those upgrades.
+        # A missing pip-audit binary still fails the step.
+        run: |
+          poetry run pip install --quiet pip-audit
+          poetry run pip-audit || echo "pip-audit reported known advisories in the locked stack; see the log above."
 
       - name: Tests
         run: poetry run pytest
@@ -76,6 +86,9 @@ jobs:
 
       - name: Lint
         run: npm run lint
+
+      - name: Dependency audit (npm, critical)
+        run: npm audit --audit-level=critical
 
       - name: Build
         # `tsc && vite build` — catches both the type errors and the

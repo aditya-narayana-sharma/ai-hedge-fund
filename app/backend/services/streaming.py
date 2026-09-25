@@ -16,7 +16,7 @@ import traceback
 from typing import Any, AsyncIterator, Awaitable, Callable
 
 from app.backend.models.events import CompleteEvent, ErrorEvent, ProgressUpdateEvent, StartEvent
-from src.utils.run_context import new_run_context, run_scope, RunContext
+from src.utils.run_context import new_run_context, run_scope, RunCancelled, RunContext
 
 # How long to wait for a progress event before re-checking whether the work
 # finished. Bounds shutdown latency without busy-waiting.
@@ -29,6 +29,7 @@ async def sse_run_stream(
     to_payload: Callable[[Any], dict],
     on_complete: Callable[[dict], None] | None = None,
     on_error: Callable[[str], None] | None = None,
+    on_start: Callable[[], None] | None = None,
 ) -> AsyncIterator[str]:
     """Stream one run as SSE: ``start``, then ``progress``*, then ``complete`` or ``error``."""
     context = new_run_context(run_id)
@@ -47,8 +48,21 @@ async def sse_run_stream(
     # and asyncio.to_thread copies it on into the worker thread. Holding the
     # binding across a yield would risk resetting a token from another context.
     task = _create_task_in_run(context, runner())
+    reported = False
+
+    def report_error(message: str) -> None:
+        nonlocal reported
+        if reported or on_error is None:
+            return
+        reported = True
+        on_error(message)
 
     try:
+        # Persist the row only once the body is actually being read. A client
+        # that opens the POST and never consumes it must not leave a permanent
+        # ``running`` row behind.
+        if on_start is not None:
+            on_start()
         yield StartEvent(run_id=run_id).to_sse()
 
         while not task.done():
@@ -69,14 +83,22 @@ async def sse_run_stream(
         yield CompleteEvent(run_id=run_id, data=payload).to_sse()
 
     except asyncio.CancelledError:
+        # The client hung up. Unblock the worker via the cooperative flag;
+        # cancelling the awaiting task does not interrupt ``asyncio.to_thread``.
+        context.request_cancel()
+        report_error("Client disconnected before the run finished.")
         raise
+    except RunCancelled:
+        message = "Client disconnected before the run finished."
+        report_error(message)
+        yield ErrorEvent(run_id=run_id, message=message).to_sse()
     except Exception as exc:
         traceback.print_exc()
         message = f"{type(exc).__name__}: {exc}"
-        if on_error is not None:
-            on_error(message)
+        report_error(message)
         yield ErrorEvent(run_id=run_id, message=message).to_sse()
     finally:
+        context.request_cancel()
         context.unregister_handler(progress_handler)
         if not task.done():
             task.cancel()

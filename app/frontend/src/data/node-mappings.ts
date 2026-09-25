@@ -28,13 +28,44 @@ const LITERAL_KEYS = new Set([RISK_MANAGER_KEY, PORTFOLIO_MANAGER_KEY, SYSTEM_KE
 const AGENT_SUFFIX = '_agent';
 
 /**
+ * Progress identities that do not match the catalog key by stripping `_agent`.
+ * `fundamentals_agent` would become `fundamentals`, and no node reads that.
+ */
+const PROGRESS_ALIASES: Record<string, string> = {
+  fundamentals_agent: 'fundamentals_analyst',
+  sentiment_agent: 'sentiment_analyst',
+  valuation_agent: 'valuation_analyst',
+  backtester: OUTPUT_KEY,
+};
+
+/** Catalog keys registered once GET /agents resolves. Empty until then. */
+let catalogKeys = new Set<string>();
+
+/** Remember the live catalog so status keys are looked up, not guessed. */
+export function registerAgentKeys(keys: Iterable<string>): void {
+  catalogKeys = new Set(keys);
+}
+
+/**
  * Convert a backend progress `agent` field into the status key the canvas
- * stores it under. Analysts arrive as `<key>_agent`; the always-on stages and
- * system messages arrive verbatim.
+ * stores it under. The catalog is the authority; the alias table covers the
+ * three analysts whose progress name is not `<catalog key>_agent`.
  */
 export function statusKeyForAgent(agentName: string): string {
-  if (LITERAL_KEYS.has(agentName)) return agentName;
-  return agentName.endsWith(AGENT_SUFFIX) ? agentName.slice(0, -AGENT_SUFFIX.length) : agentName;
+  const alias = PROGRESS_ALIASES[agentName];
+  if (alias && (catalogKeys.size === 0 || catalogKeys.has(alias) || alias === OUTPUT_KEY)) {
+    return alias;
+  }
+  if (catalogKeys.has(agentName) || LITERAL_KEYS.has(agentName)) {
+    return agentName;
+  }
+  if (agentName.endsWith(AGENT_SUFFIX)) {
+    const stripped = agentName.slice(0, -AGENT_SUFFIX.length);
+    if (catalogKeys.size === 0 || catalogKeys.has(stripped)) {
+      return stripped;
+    }
+  }
+  return agentName;
 }
 
 /** Stages the backend runs on every request, whether or not they are on the canvas. */

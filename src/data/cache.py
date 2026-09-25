@@ -11,12 +11,19 @@ Readers ask :meth:`Cache.missing_ranges` what is still uncovered, fetch only
 that, and serve from the cache once coverage is complete.
 """
 
+import atexit
 import json
 import os
+import threading
 import time
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
+
+try:
+    import fcntl
+except ImportError:  # Windows has no fcntl; the in-process lock still applies.
+    fcntl = None  # type: ignore[assignment]
 
 # Optional wall-clock expiry for cached rows, in seconds. Unset means no expiry,
 # which is the right default for historical market data.
@@ -140,9 +147,13 @@ _KEY_FIELDS = {
 class Cache:
     """Per-ticker cache of API responses with date-range coverage tracking."""
 
-    def __init__(self, ttl_seconds: float | None = None, persist_dir: str | None = None) -> None:
+    def __init__(self, ttl_seconds: float | None = None, persist_dir: str | None = None, debounce_seconds: float = 0.0) -> None:
         self.ttl_seconds = ttl_seconds
         self.persist_dir = persist_dir
+        self.debounce_seconds = debounce_seconds
+        self._dirty = False
+        self._last_save = 0.0
+        self._write_lock = threading.Lock()
         # collection name -> ticker -> rows and coverage
         self._data: dict[str, dict[str, _Collection]] = {name: {} for name in _KEY_FIELDS}
         if self.persist_dir:
@@ -188,6 +199,7 @@ class Cache:
         collection = self._collection(name, ticker)
         collection.merge(rows)
         collection.add_coverage(start_date, end_date)
+        self._dirty = True
         self.save()
 
     # ---- per-collection convenience -------------------------------------
@@ -198,17 +210,26 @@ class Cache:
     def set_prices(self, ticker: str, data: list[dict[str, Any]], start_date: str, end_date: str) -> None:
         self.store("prices", ticker, data, start_date, end_date)
 
-    def get_financial_metrics(self, ticker: str, end_date: str) -> list[dict[str, Any]]:
-        return self.get_rows("financial_metrics", ticker, None, end_date)
+    @staticmethod
+    def period_slot(ticker: str, period: str) -> str:
+        """Cache identity for one statement frequency.
 
-    def set_financial_metrics(self, ticker: str, data: list[dict[str, Any]], start_date: str, end_date: str) -> None:
-        self.store("financial_metrics", ticker, data, start_date, end_date)
+        ``ttm`` and ``annual`` share a ``report_period`` and must not share a
+        slot, or the first fetch answers every later request.
+        """
+        return f"{ticker}::{period}"
 
-    def get_line_items(self, ticker: str, end_date: str) -> list[dict[str, Any]]:
-        return self.get_rows("line_items", ticker, None, end_date)
+    def get_financial_metrics(self, ticker: str, end_date: str, period: str = "ttm") -> list[dict[str, Any]]:
+        return self.get_rows("financial_metrics", self.period_slot(ticker, period), None, end_date)
 
-    def set_line_items(self, ticker: str, data: list[dict[str, Any]], start_date: str, end_date: str) -> None:
-        self.store("line_items", ticker, data, start_date, end_date)
+    def set_financial_metrics(self, ticker: str, data: list[dict[str, Any]], start_date: str, end_date: str, period: str = "ttm") -> None:
+        self.store("financial_metrics", self.period_slot(ticker, period), data, start_date, end_date)
+
+    def get_line_items(self, ticker: str, end_date: str, period: str = "ttm") -> list[dict[str, Any]]:
+        return self.get_rows("line_items", self.period_slot(ticker, period), None, end_date)
+
+    def set_line_items(self, ticker: str, data: list[dict[str, Any]], start_date: str, end_date: str, period: str = "ttm") -> None:
+        self.store("line_items", self.period_slot(ticker, period), data, start_date, end_date)
 
     def get_insider_trades(self, ticker: str, start_date: str | None, end_date: str) -> list[dict[str, Any]]:
         return self.get_rows("insider_trades", ticker, start_date, end_date)
@@ -229,32 +250,94 @@ class Cache:
             return None
         return Path(self.persist_dir) / "api-cache.json"
 
-    def save(self) -> None:
-        """Write the cache to disk when a persistence directory is configured."""
+    def save(self, force: bool = False) -> None:
+        """Write the cache atomically when a persistence directory is configured.
+
+        Rapid ``store`` calls coalesce until ``debounce_seconds`` has elapsed.
+        ``flush`` (and process exit, for the global cache) force the write.
+        """
         path = self._persist_path()
-        if path is None:
+        if path is None or not self._dirty:
             return
+        now = time.monotonic()
+        if not force and self.debounce_seconds > 0 and (now - self._last_save) < self.debounce_seconds:
+            return
+        self._write_atomic(path)
+
+    def flush(self) -> None:
+        """Write any coalesced changes immediately."""
+        self.save(force=True)
+
+    def _write_atomic(self, path: Path) -> None:
+        """Lock, merge anything another process wrote, then replace the file."""
         path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {name: {ticker: collection.to_json() for ticker, collection in bucket.items()} for name, bucket in self._data.items()}
-        path.write_text(json.dumps(payload), encoding="utf-8")
+        lock_path = path.with_name(path.name + ".lock")
+        with self._write_lock:
+            with open(lock_path, "a+", encoding="utf-8") as lock_file:
+                if fcntl is not None:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+                try:
+                    self._merge_from_disk(path)
+                    payload = {name: {ticker: collection.to_json() for ticker, collection in bucket.items()} for name, bucket in self._data.items()}
+                    temporary = path.with_name(path.name + ".tmp")
+                    temporary.write_text(json.dumps(payload), encoding="utf-8")
+                    os.replace(temporary, path)
+                    self._dirty = False
+                    self._last_save = time.monotonic()
+                finally:
+                    if fcntl is not None:
+                        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+    def _merge_from_disk(self, path: Path) -> None:
+        """Fold another process's rows into memory before we overwrite the file."""
+        if not path.exists():
+            return
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as exc:
+            print(f"Warning: cache file {path} could not be read ({exc}); keeping the in-memory copy.")
+            return
+        if not isinstance(payload, dict):
+            print(f"Warning: cache file {path} is not an object; keeping the in-memory copy.")
+            return
+        for name, bucket in payload.items():
+            if name not in self._data or not isinstance(bucket, dict):
+                continue
+            for ticker, raw in bucket.items():
+                other = _Collection.from_json(raw)
+                current = self._data[name].get(ticker)
+                if current is None:
+                    self._data[name][ticker] = other
+                    continue
+                current.merge(other.rows)
+                for start, end in other.covered:
+                    current.add_coverage(start, end)
 
     def load(self) -> None:
-        """Restore a previously persisted cache; ignore an unreadable file."""
+        """Restore a previously persisted cache. A torn file is a warning, not silence."""
         path = self._persist_path()
         if path is None or not path.exists():
             return
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, OSError) as exc:
+            print(f"Warning: cache file {path} could not be read ({exc}); starting empty.")
+            return
+        if not isinstance(payload, dict):
+            print(f"Warning: cache file {path} is not an object; starting empty.")
             return
         for name, bucket in payload.items():
-            if name not in self._data:
+            if name not in self._data or not isinstance(bucket, dict):
                 continue
             self._data[name] = {ticker: _Collection.from_json(raw) for ticker, raw in bucket.items()}
 
     def clear(self) -> None:
-        """Drop every cached row and all coverage. Used between isolated runs."""
+        """Drop every cached row and all coverage, including the persisted copy."""
         self._data = {name: {} for name in _KEY_FIELDS}
+        self._dirty = False
+        path = self._persist_path()
+        if path is not None and path.exists():
+            path.unlink()
 
 
 def _ttl_from_env() -> float | None:
@@ -267,8 +350,21 @@ def _ttl_from_env() -> float | None:
         return None
 
 
+def _debounce_from_env(persist_dir: str | None) -> float:
+    """Coalesce disk writes only when persistence is actually on."""
+    if not persist_dir:
+        return 0.0
+    raw = os.environ.get("AI_HEDGE_FUND_CACHE_DEBOUNCE", "0.5")
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return 0.5
+
+
 # Global cache instance, used by the CLI. The web backend creates one per run.
-_cache = Cache(ttl_seconds=_ttl_from_env(), persist_dir=os.environ.get(_DIR_ENV_VAR))
+_persist_dir = os.environ.get(_DIR_ENV_VAR)
+_cache = Cache(ttl_seconds=_ttl_from_env(), persist_dir=_persist_dir, debounce_seconds=_debounce_from_env(_persist_dir))
+atexit.register(_cache.flush)
 
 
 def get_cache() -> Cache:

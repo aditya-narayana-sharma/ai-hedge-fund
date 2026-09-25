@@ -55,13 +55,12 @@ async def run_hedge_fund(request: HedgeFundRequest):
             "analyst_signals": result.get("data", {}).get("analyst_signals", {}),
         }
 
-    record_started("hedge_fund", request)
-
     return StreamingResponse(
         sse_run_stream(
             request.run_id,
             runner,
             to_payload,
+            on_start=lambda: record_started("hedge_fund", request),
             on_complete=lambda payload: record_finished(request.run_id, result=payload),
             on_error=lambda message: record_finished(request.run_id, error=message),
         ),

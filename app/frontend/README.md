@@ -12,7 +12,7 @@ This frontend project is built with React and Vite, serving as the client-side c
 The project contains the minimum dependencies to get up and running, and includes eslint with additional rules to help write clean React code:
 
 ```bash
-npm install # or `pnpm install` or `yarn install`
+npm install # npm is authoritative; CI uses package-lock.json
 ```
 
 ## Running the Application

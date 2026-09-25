@@ -1,7 +1,6 @@
-# Vite dev server for the canvas. The production build is `npm run build`,
-# which emits static files that any web server can host; this image exists so
-# `docker compose up` brings the whole system online.
-FROM node:20-slim
+# Production canvas. The Vite dev server is for local `npm run dev` only;
+# this image serves the build CI already gates.
+FROM node:20-slim AS build
 
 WORKDIR /app
 
@@ -10,7 +9,15 @@ RUN npm ci
 
 COPY . .
 
-EXPOSE 5173
+# Baked in at build time. The browser calls the host-published API.
+ARG VITE_API_URL=http://localhost:8000
+ENV VITE_API_URL=$VITE_API_URL
 
-# --host binds 0.0.0.0 so the port is reachable from outside the container.
-CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
+RUN npm run build
+
+FROM nginx:1.27-alpine
+
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/dist /usr/share/nginx/html
+
+EXPOSE 80

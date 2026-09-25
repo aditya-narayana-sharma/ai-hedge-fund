@@ -1,0 +1,11 @@
+# GitHub only reads this file from the repository-root .github/ directory.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: npm
+    directory: /app/frontend
+    schedule:
+      interval: weekly

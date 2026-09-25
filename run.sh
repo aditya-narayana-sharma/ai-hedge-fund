@@ -16,6 +16,8 @@ show_help() {
   echo "  --show-reasoning    Show reasoning from each agent"
   echo "  --analysts LIST     Comma-separated analysts (e.g., warren_buffett,michael_burry)"
   echo "  --analysts-all      Use every available analyst (overrides --analysts)"
+  echo "  --position-limit R  Max fraction of portfolio value per position (default: 0.2)"
+  echo "  --chart-output PATH Write the equity curve to this file (Docker writes under ./output)"
   echo ""
   echo "Commands:"
   echo "  main                Run the main hedge fund application"
@@ -50,6 +52,33 @@ SHOW_REASONING=""
 ANALYSTS="--analysts-all"
 COMMAND=""
 MODEL_NAME=""
+POSITION_LIMIT=""
+CHART_OUTPUT=""
+
+# Compose refuses to start when env_file points at a missing file. Create
+# .env before any docker invocation, including compose, ollama and pull.
+ensure_dotenv() {
+  if [ -f .env ]; then
+    return
+  fi
+  if [ -f .env.example ]; then
+    echo "No .env file found. Creating from .env.example..."
+    cp .env.example .env
+  else
+    echo "No .env or .env.example file found. Creating an empty .env..."
+    cat > .env <<'ENVEOF'
+# Set at least one LLM provider key below, then re-run this command.
+ANTHROPIC_API_KEY=
+DEEPSEEK_API_KEY=
+GROQ_API_KEY=
+GOOGLE_API_KEY=
+OPENAI_API_KEY=
+# Optional: free for AAPL, GOOGL, MSFT, NVDA, TSLA without a key.
+FINANCIAL_DATASETS_API_KEY=
+ENVEOF
+  fi
+  echo "Please edit .env and add your API keys (at least one LLM provider), then re-run."
+}
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -90,6 +119,14 @@ while [[ $# -gt 0 ]]; do
       ANALYSTS="--analysts-all"
       shift
       ;;
+    --position-limit)
+      POSITION_LIMIT="$2"
+      shift 2
+      ;;
+    --chart-output)
+      CHART_OUTPUT="$2"
+      shift 2
+      ;;
     main|backtest|build|help|compose|ollama|web)
       COMMAND="$1"
       shift
@@ -123,6 +160,10 @@ if [ "$COMMAND" = "help" ]; then
   show_help
   exit 0
 fi
+
+# Before build/ollama/pull/compose/web. A missing .env is fatal for Compose.
+ensure_dotenv
+mkdir -p output
 
 # Check for Docker Compose existence
 if ! command -v docker-compose &> /dev/null && ! docker compose version &> /dev/null; then
@@ -232,29 +273,6 @@ if [ "$COMMAND" = "compose" ]; then
   exit 0
 fi
 
-# Check if .env file exists, if not create it.
-# Prefer .env.example as the template, but never hard-fail on its absence:
-# the run scripts must not depend on a template file being present.
-if [ ! -f .env ]; then
-  if [ -f .env.example ]; then
-    echo "No .env file found. Creating from .env.example..."
-    cp .env.example .env
-  else
-    echo "No .env or .env.example file found. Creating an empty .env..."
-    cat > .env <<'ENVEOF'
-# Set at least one LLM provider key below, then re-run this command.
-ANTHROPIC_API_KEY=
-DEEPSEEK_API_KEY=
-GROQ_API_KEY=
-GOOGLE_API_KEY=
-OPENAI_API_KEY=
-# Optional: free for AAPL, GOOGL, MSFT, NVDA, TSLA without a key.
-FINANCIAL_DATASETS_API_KEY=
-ENVEOF
-  fi
-  echo "Please edit .env and add your API keys (at least one LLM provider), then re-run."
-fi
-
 # Run only the web application (backend API + canvas)
 if [ "$COMMAND" = "web" ]; then
   echo "Starting the backend API and the canvas..."
@@ -327,6 +345,14 @@ if [ -n "$USE_OLLAMA" ]; then
   if [ -n "$ANALYSTS" ]; then
     COMMAND_OVERRIDE="$COMMAND_OVERRIDE $ANALYSTS"
   fi
+
+  if [ -n "$POSITION_LIMIT" ]; then
+    COMMAND_OVERRIDE="$COMMAND_OVERRIDE --position-limit $POSITION_LIMIT"
+  fi
+
+  if [ -n "$CHART_OUTPUT" ]; then
+    COMMAND_OVERRIDE="$COMMAND_OVERRIDE --chart-output /output/$(basename "$CHART_OUTPUT")"
+  fi
   
   # Run the command with Docker Compose
   echo "Running AI Hedge Fund with Ollama using Docker Compose..."
@@ -334,23 +360,30 @@ if [ -n "$USE_OLLAMA" ]; then
   # Use the appropriate service based on command and reasoning flag
   if [ "$COMMAND" = "main" ]; then
     if [ -n "$SHOW_REASONING" ]; then
-      $COMPOSE_CMD $GPU_CONFIG run --rm hedge-fund-reasoning python src/main.py --ticker $TICKER $COMMAND_OVERRIDE $SHOW_REASONING --ollama
+      $COMPOSE_CMD $GPU_CONFIG run --rm -v "$(pwd)/output:/output" hedge-fund-reasoning python src/main.py --ticker $TICKER $COMMAND_OVERRIDE $SHOW_REASONING --ollama
     else
-      $COMPOSE_CMD $GPU_CONFIG run --rm hedge-fund-ollama python src/main.py --ticker $TICKER $COMMAND_OVERRIDE --ollama
+      $COMPOSE_CMD $GPU_CONFIG run --rm -v "$(pwd)/output:/output" hedge-fund-ollama python src/main.py --ticker $TICKER $COMMAND_OVERRIDE --ollama
     fi
   elif [ "$COMMAND" = "backtest" ]; then
-    $COMPOSE_CMD $GPU_CONFIG run --rm backtester-ollama python src/backtester.py --ticker $TICKER $COMMAND_OVERRIDE $SHOW_REASONING --ollama
+    $COMPOSE_CMD $GPU_CONFIG run --rm -v "$(pwd)/output:/output" backtester-ollama python src/backtester.py --ticker $TICKER $COMMAND_OVERRIDE $SHOW_REASONING --ollama
   fi
   
   exit 0
 fi
 
 # Standard Docker run (without Ollama)
-# Build the command
-CMD="docker run -it --rm -v $(pwd)/.env:/app/.env"
+# Build the command. ./output is mounted at /output so a chart survives exit.
+EXTRA_ARGS=""
+if [ -n "$POSITION_LIMIT" ]; then
+  EXTRA_ARGS="$EXTRA_ARGS --position-limit $POSITION_LIMIT"
+fi
+if [ -n "$CHART_OUTPUT" ]; then
+  EXTRA_ARGS="$EXTRA_ARGS --chart-output /output/$(basename "$CHART_OUTPUT")"
+fi
+CMD="docker run -it --rm -v $(pwd)/.env:/app/.env -v $(pwd)/output:/output"
 
 # Add the command
-CMD="$CMD ai-hedge-fund python $SCRIPT_PATH --ticker $TICKER $START_DATE $END_DATE $INITIAL_PARAM --margin-requirement $MARGIN_REQUIREMENT $SHOW_REASONING $ANALYSTS"
+CMD="$CMD ai-hedge-fund python $SCRIPT_PATH --ticker $TICKER $START_DATE $END_DATE $INITIAL_PARAM --margin-requirement $MARGIN_REQUIREMENT $SHOW_REASONING $ANALYSTS $EXTRA_ARGS"
 
 # Run the command
 echo "Running: $CMD"

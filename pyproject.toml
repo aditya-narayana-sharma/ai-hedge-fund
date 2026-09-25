@@ -56,6 +56,10 @@ include = '\.pyi?$'
 profile = "black"
 line_length = 200
 force_alphabetical_sort_within_sections = true
+# Black keeps a parenthesized import that ends with a trailing comma. Without
+# this, isort collapses any of those that fit in 200 columns and the two
+# formatters disagree.
+split_on_trailing_comma = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,5 +1,6 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
+import { registerAgentKeys } from '@/data/node-mappings';
 import { fetchAgents, fetchModels } from '@/services/catalog';
 import { AgentItem, ModelItem } from '@/services/types';
 
@@ -32,7 +33,9 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
     Promise.all([fetchAgents(), fetchModels()])
       .then(([loadedAgents, loadedModels]) => {
         if (cancelled) return;
-        setAgents([...loadedAgents].sort((a, b) => a.order - b.order));
+        const sorted = [...loadedAgents].sort((a, b) => a.order - b.order);
+        setAgents(sorted);
+        registerAgentKeys(sorted.map((agent) => agent.key));
         setModels(loadedModels);
       })
       .catch((err: unknown) => {
