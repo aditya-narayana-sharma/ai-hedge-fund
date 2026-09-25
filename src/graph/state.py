@@ -1,21 +1,37 @@
+import json
+import operator
+from typing import Any
+
+from langchain_core.messages import BaseMessage
 from typing_extensions import Annotated, Sequence, TypedDict
 
-import operator
-from langchain_core.messages import BaseMessage
 
+def merge_dicts(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
+    """Recursively merge ``b`` into ``a`` without mutating either.
 
-import json
+    A shallow ``{**a, **b}`` was only safe because every analyst mutated one
+    shared ``analyst_signals`` dict in place before returning it. The moment
+    two parallel branches return disjoint partials — which checkpointing,
+    ``Send``-based fan-out or thread isolation would cause — the shallow merge
+    drops one branch's signals wholesale. Merging per key removes that trap.
+    """
+    merged = dict(a)
 
+    for key, value in b.items():
+        existing = merged.get(key)
+        if isinstance(existing, dict) and isinstance(value, dict):
+            merged[key] = merge_dicts(existing, value)
+        else:
+            merged[key] = value
 
-def merge_dicts(a: dict[str, any], b: dict[str, any]) -> dict[str, any]:
-    return {**a, **b}
+    return merged
 
 
 # Define agent state
 class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], operator.add]
-    data: Annotated[dict[str, any], merge_dicts]
-    metadata: Annotated[dict[str, any], merge_dicts]
+    data: Annotated[dict[str, Any], merge_dicts]
+    metadata: Annotated[dict[str, Any], merge_dicts]
 
 
 def show_agent_reasoning(output, agent_name):

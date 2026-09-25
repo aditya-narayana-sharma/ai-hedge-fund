@@ -80,3 +80,31 @@ export function getNodesInCompletePaths({
   
   return selectedAgents;
 }
+
+/**
+ * Agent keys on complete Input -> ... -> Output paths, de-duplicated.
+ *
+ * The input node previously collected only the agents one hop from itself,
+ * leaving `getNodesInCompletePaths` implemented but imported nowhere. That
+ * ignored chained topologies and let a branch that never reaches the output
+ * node be submitted anyway.
+ */
+export function getAgentKeysInCompletePaths(params: {
+  startNodeId: string;
+  endNodeId: string;
+  nodes: Node[];
+  edges: Edge[];
+  exclude?: string[];
+}): string[] {
+  const nodeIdsOnPaths = getNodesInCompletePaths(params);
+  const excluded = new Set(params.exclude ?? []);
+  const keys = new Set<string>();
+
+  for (const node of params.nodes) {
+    if (node.type !== 'agent-node' || !nodeIdsOnPaths.has(node.id)) continue;
+    const agentKey = (node.data as { agentKey?: string }).agentKey;
+    if (agentKey && !excluded.has(agentKey)) keys.add(agentKey);
+  }
+
+  return [...keys];
+}

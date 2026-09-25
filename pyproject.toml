@@ -2,7 +2,7 @@
 name = "ai-hedge-fund"
 version = "0.1.0"
 description = "An AI-powered hedge fund that uses multiple agents to make trading decisions"
-authors = ["Your Name <your.email@example.com>"]
+authors = ["AI Hedge Fund contributors <noreply@github.com>"]
 readme = "README.md"
 packages = [
     { include = "src", from = "." },
@@ -40,16 +40,33 @@ pytest = "^7.4.0"
 black = "^23.7.0"
 isort = "^5.12.0"
 flake8 = "^6.1.0"
+mypy = "^1.8.0"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.black]
-line-length = 420
+# Was 420, which is long enough that black never reformatted anything.
+line-length = 200
 target-version = ['py311']
 include = '\.pyi?$'
 
 [tool.isort]
 profile = "black"
+line_length = 200
 force_alphabetical_sort_within_sections = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
+
+[tool.mypy]
+python_version = "3.11"
+# Rolled out module by module rather than repo-wide; src/utils and src/data are
+# the shared foundations, so they are typed first.
+files = ["src/data", "src/utils/json_parsing.py", "src/utils/run_context.py", "src/utils/charts.py"]
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true

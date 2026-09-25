@@ -1,11 +1,12 @@
-from langchain_core.messages import HumanMessage
-from src.graph.state import AgentState, show_agent_reasoning
-from src.utils.progress import progress
-import pandas as pd
-import numpy as np
 import json
 
-from src.tools.api import get_insider_trades, get_company_news
+import numpy as np
+import pandas as pd
+from langchain_core.messages import HumanMessage
+
+from src.graph.state import AgentState, show_agent_reasoning
+from src.tools.api import get_company_news, get_insider_trades
+from src.utils.progress import progress
 
 
 ##### Sentiment Agent #####
@@ -41,23 +42,16 @@ def sentiment_agent(state: AgentState):
 
         # Get the sentiment from the company news
         sentiment = pd.Series([n.sentiment for n in company_news]).dropna()
-        news_signals = np.where(sentiment == "negative", "bearish", 
-                              np.where(sentiment == "positive", "bullish", "neutral")).tolist()
-        
+        news_signals = np.where(sentiment == "negative", "bearish", np.where(sentiment == "positive", "bullish", "neutral")).tolist()
+
         progress.update_status("sentiment_agent", ticker, "Combining signals")
         # Combine signals from both sources with weights
         insider_weight = 0.3
         news_weight = 0.7
-        
+
         # Calculate weighted signal counts
-        bullish_signals = (
-            insider_signals.count("bullish") * insider_weight +
-            news_signals.count("bullish") * news_weight
-        )
-        bearish_signals = (
-            insider_signals.count("bearish") * insider_weight +
-            news_signals.count("bearish") * news_weight
-        )
+        bullish_signals = insider_signals.count("bullish") * insider_weight + news_signals.count("bullish") * news_weight
+        bearish_signals = insider_signals.count("bearish") * insider_weight + news_signals.count("bearish") * news_weight
 
         if bullish_signals > bearish_signals:
             overall_signal = "bullish"

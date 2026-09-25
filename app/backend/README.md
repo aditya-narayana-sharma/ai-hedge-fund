@@ -53,11 +53,11 @@ FINANCIAL_DATASETS_API_KEY=your-financial-datasets-api-key
 To run the development server:
 
 ```bash
-# Navigate to the backend directory
-cd app/backend
-
-# Start the FastAPI server with uvicorn
-poetry run uvicorn main:app --reload
+# Run from the REPOSITORY ROOT, not from app/backend.
+# main.py imports `app.backend.routes`, so the root must be on sys.path;
+# `cd app/backend && uvicorn main:app` makes `app` unresolvable and loads
+# this module twice under two different names.
+poetry run uvicorn app.backend.main:app --reload
 ```
 
 This will start the FastAPI server with hot-reloading enabled.
@@ -68,25 +68,48 @@ The API will be available at:
 
 ## API Endpoints
 
-- `POST /hedge-fund/run`: Run the AI Hedge Fund with specified parameters
-- `GET /ping`: Simple endpoint to test server connectivity
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/` | Welcome message |
+| `GET` | `/ping` | Simple endpoint to test server connectivity |
+| `GET` | `/agents` | Analyst catalog, derived from `ANALYST_CONFIG` |
+| `GET` | `/models` | Model catalog, cloud providers and Ollama |
+| `POST` | `/hedge-fund/run` | Run the AI Hedge Fund, streaming SSE |
+| `POST` | `/backtest` | Day-by-day simulation, streaming SSE |
+
+Both `POST` endpoints stream the same event envelope — `start`, `progress`*,
+then `complete` or `error` — and every event carries the `run_id`, which is
+also echoed in the `X-Run-Id` response header.
+
+Set `AI_HEDGE_FUND_API_KEY` to require an `X-API-Key` header on the two run
+endpoints, and `AI_HEDGE_FUND_RATE_LIMIT` to cap requests per client. Both are
+disabled when unset. Interactive docs are at `/docs`.
 
 ## Project Structure
 
 ```
 app/backend/
-├── api/                      # API layer (future expansion)
+├── api/                      # Composition: which routers exist, and their guards
+│   ├── deps.py               # API-key auth and rate limiting (both opt-in)
+│   └── v1.py                 # Router assembly
+├── database/                 # Optional run-history persistence
+│   ├── models.py             # SQLAlchemy models
+│   └── session.py            # Engine and session handling
 ├── models/                   # Domain models
-│   ├── __init__.py
-│   └── schemas.py            # Pydantic schema definitions
-├── routes/                   # API routes
-│   ├── __init__.py           # Router registry
-│   ├── hedge_fund.py         # Hedge fund endpoints
-│   └── health.py             # Health check endpoints
+│   ├── events.py             # SSE event envelope
+│   └── schemas.py            # Request and response schemas
+├── routes/                   # Endpoint implementations
+│   ├── backtest.py           # POST /backtest
+│   ├── catalog.py            # GET /agents, GET /models
+│   ├── health.py             # GET /, GET /ping
+│   └── hedge_fund.py         # POST /hedge-fund/run
 ├── services/                 # Business logic
-│   ├── graph.py              # Agent graph functionality
-│   └── portfolio.py          # Portfolio management
-├── __init__.py               # Package initialization
+│   ├── backtest.py           # Backtest orchestration and wire mapping
+│   ├── graph.py              # Agent graph construction and validation
+│   ├── portfolio.py          # Portfolio construction
+│   ├── run_store.py          # Run-history recording
+│   └── streaming.py          # Shared SSE lifecycle
+├── __init__.py               # Package marker
 └── main.py                   # FastAPI application entry point
 ```
 

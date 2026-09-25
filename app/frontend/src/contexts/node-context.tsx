@@ -1,5 +1,7 @@
 import { createContext, ReactNode, useCallback, useContext, useState } from 'react';
 
+import { HedgeFundResult } from '@/services/types';
+
 export type NodeStatus = 'IDLE' | 'IN_PROGRESS' | 'COMPLETE' | 'ERROR';
 
 // Message history item
@@ -20,10 +22,7 @@ export interface AgentNodeData {
 }
 
 // Data structure for the output node data (from complete event)
-export interface OutputNodeData {
-  decisions: Record<string, any>;
-  analyst_signals: Record<string, any>;
-}
+export type OutputNodeData = HedgeFundResult;
 
 // Default agent node state
 const DEFAULT_AGENT_NODE_STATE: AgentNodeData = {
@@ -37,9 +36,12 @@ const DEFAULT_AGENT_NODE_STATE: AgentNodeData = {
 interface NodeContextType {
   agentNodeData: Record<string, AgentNodeData>;
   outputNodeData: OutputNodeData | null;
+  /** Message from the SSE `error` event, or a transport failure. */
+  runError: string | null;
   updateAgentNode: (nodeId: string, data: Partial<AgentNodeData> | NodeStatus) => void;
   updateAgentNodes: (nodeIds: string[], status: NodeStatus) => void;
   setOutputNodeData: (data: OutputNodeData) => void;
+  setRunError: (message: string | null) => void;
   resetAllNodes: () => void;
 }
 
@@ -48,6 +50,7 @@ const NodeContext = createContext<NodeContextType | undefined>(undefined);
 export function NodeProvider({ children }: { children: ReactNode }) {
   const [agentNodeData, setAgentNodeData] = useState<Record<string, AgentNodeData>>({});
   const [outputNodeData, setOutputNodeData] = useState<OutputNodeData | null>(null);
+  const [runError, setRunError] = useState<string | null>(null);
 
   const updateAgentNode = useCallback((nodeId: string, data: Partial<AgentNodeData> | NodeStatus) => {
     // Handle string status shorthand (just passing a status string)
@@ -113,6 +116,7 @@ export function NodeProvider({ children }: { children: ReactNode }) {
   const resetAllNodes = useCallback(() => {
     setAgentNodeData({});
     setOutputNodeData(null);
+    setRunError(null);
   }, []);
 
   return (
@@ -120,9 +124,11 @@ export function NodeProvider({ children }: { children: ReactNode }) {
       value={{
         agentNodeData,
         outputNodeData,
+        runError,
         updateAgentNode,
         updateAgentNodes,
         setOutputNodeData,
+        setRunError,
         resetAllNodes,
       }}
     >

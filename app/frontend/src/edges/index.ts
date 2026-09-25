@@ -1,6 +1,9 @@
 import type { EdgeTypes } from '@xyflow/react';
 
+import { StatusEdge } from './status-edge';
+
+export const STATUS_EDGE_TYPE = 'status-edge';
 
 export const edgeTypes = {
-  // Add your custom edge types here!
+  [STATUS_EDGE_TYPE]: StatusEdge,
 } satisfies EdgeTypes;

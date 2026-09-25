@@ -1,12 +1,14 @@
+import json
+
+from langchain_core.messages import HumanMessage
+from langchain_core.prompts import ChatPromptTemplate
+from pydantic import BaseModel
+from typing_extensions import Literal
+
 from src.graph.state import AgentState, show_agent_reasoning
 from src.tools.api import get_financial_metrics, get_market_cap, search_line_items
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.messages import HumanMessage
-from pydantic import BaseModel
-import json
-from typing_extensions import Literal
-from src.utils.progress import progress
 from src.utils.llm import call_llm
+from src.utils.progress import progress
 
 
 class CathieWoodSignal(BaseModel):
@@ -80,7 +82,14 @@ def cathie_wood_agent(state: AgentState):
         else:
             signal = "neutral"
 
-        analysis_data[ticker] = {"signal": signal, "score": total_score, "max_score": max_possible_score, "disruptive_analysis": disruptive_analysis, "innovation_analysis": innovation_analysis, "valuation_analysis": valuation_analysis}
+        analysis_data[ticker] = {
+            "signal": signal,
+            "score": total_score,
+            "max_score": max_possible_score,
+            "disruptive_analysis": disruptive_analysis,
+            "innovation_analysis": innovation_analysis,
+            "valuation_analysis": valuation_analysis,
+        }
 
         progress.update_status("cathie_wood_agent", ticker, "Generating Cathie Wood analysis")
         cw_output = generate_cathie_wood_output(
@@ -294,7 +303,9 @@ def analyze_innovation_growth(metrics: list, financial_line_items: list) -> dict
         details.append("Insufficient CAPEX data")
 
     # 5. Growth Reinvestment Analysis
-    dividends = [item.dividends_and_other_cash_distributions for item in financial_line_items if hasattr(item, "dividends_and_other_cash_distributions") and item.dividends_and_other_cash_distributions]
+    dividends = [
+        item.dividends_and_other_cash_distributions for item in financial_line_items if hasattr(item, "dividends_and_other_cash_distributions") and item.dividends_and_other_cash_distributions
+    ]
     if dividends and fcf_vals:
         latest_payout_ratio = dividends[0] / fcf_vals[0] if fcf_vals[0] != 0 else 1
         if latest_payout_ratio < 0.2:  # Low dividend payout ratio suggests reinvestment focus
@@ -386,7 +397,7 @@ def generate_cathie_wood_output(
             - Check if the company can scale effectively in a large market.
             - Use a growth-biased valuation approach.
             - Provide a data-driven recommendation (bullish, bearish, or neutral).
-            
+
             When providing your reasoning, be thorough and specific by:
             1. Identifying the specific disruptive technologies/innovations the company is leveraging
             2. Highlighting growth metrics that indicate exponential potential (revenue acceleration, expanding TAM)
@@ -394,7 +405,7 @@ def generate_cathie_wood_output(
             4. Explaining how the company might disrupt traditional industries or create new markets
             5. Addressing R&D investment and innovation pipeline that could drive future growth
             6. Using Cathie Wood's optimistic, future-focused, and conviction-driven voice
-            
+
             For example, if bullish: "The company's AI-driven platform is transforming the $500B healthcare analytics market, with evidence of platform adoption accelerating from 40% to 65% YoY. Their R&D investments of 22% of revenue are creating a technological moat that positions them to capture a significant share of this expanding market. The current valuation doesn't reflect the exponential growth trajectory we expect as..."
             For example, if bearish: "While operating in the genomics space, the company lacks truly disruptive technology and is merely incrementally improving existing techniques. R&D spending at only 8% of revenue signals insufficient investment in breakthrough innovation. With revenue growth slowing from 45% to 20% YoY, there's limited evidence of the exponential adoption curve we look for in transformative companies..."
             """,

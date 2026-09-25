@@ -28,13 +28,16 @@ import {
 } from '@/components/ui/table';
 import { ArrowDown, ArrowUp, Minus } from 'lucide-react';
 
+import { OutputNodeData } from '@/contexts/node-context';
+
 interface TextOutputDialogProps {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
-  outputNodeData: any;
+  outputNodeData: OutputNodeData | null;
 }
 
 type ActionType = 'long' | 'short' | 'hold';
+type BadgeVariant = 'secondary' | 'destructive' | 'warning' | 'success' | 'outline';
 
 export function TextOutputDialog({ 
   isOpen, 
@@ -56,28 +59,20 @@ export function TextOutputDialog({
     }
   };
 
-  const getSignalBadge = (signal: string) => {
-    const variant = signal === 'bullish' ? 'success' : 
-                   signal === 'bearish' ? 'destructive' : 'outline';
-    
-    return (
-      <Badge variant={variant as any}>
-        {signal}
-      </Badge>
-    );
+  const getSignalBadge = (signal: string | undefined) => {
+    if (!signal) return null;
+    const variant: BadgeVariant =
+      signal === 'bullish' ? 'success' : signal === 'bearish' ? 'destructive' : 'outline';
+
+    return <Badge variant={variant}>{signal}</Badge>;
   };
 
-  const getConfidenceBadge = (confidence: number) => {
-    let variant = 'outline';
-    if (confidence >= 50) variant = 'success';
-    else if (confidence >= 0) variant = 'warning';
-    else variant = 'outline';
+  const getConfidenceBadge = (confidence: number | undefined) => {
+    if (confidence === undefined) return null;
+    const variant: BadgeVariant =
+      confidence >= 50 ? 'success' : confidence >= 0 ? 'warning' : 'outline';
     const rounded = Number(confidence.toFixed(1));
-    return (
-      <Badge variant={variant as any}>
-        {rounded}%
-      </Badge>
-    );
+    return <Badge variant={variant}>{rounded}%</Badge>;
   };
 
   // Extract unique tickers from the data
@@ -185,7 +180,11 @@ export function TextOutputDialog({
                                 </div>
                               </CardHeader>
                               <CardContent className="pt-3">
-                                <p className="text-sm whitespace-pre-line">{signal.reasoning}</p>
+                                <p className="text-sm whitespace-pre-line">
+                                  {typeof signal.reasoning === 'string'
+                                    ? signal.reasoning
+                                    : JSON.stringify(signal.reasoning, null, 2)}
+                                </p>
                               </CardContent>
                             </Card>
                           );

@@ -17,10 +17,12 @@ export function AgentNode({
   isConnectable,
 }: NodeProps<AgentNode>) {
   const { agentNodeData } = useNodeContext();
-  const nodeData = agentNodeData[id] || { 
-    status: 'IDLE', 
-    ticker: null, 
-    message: '', 
+  // Keyed by the backend agent identity, not the node id, so two instances of
+  // the same agent both reflect the one run the backend performs.
+  const nodeData = agentNodeData[data.agentKey] || {
+    status: 'IDLE',
+    ticker: null,
+    message: '',
     messages: [],
     lastUpdated: 0
   };

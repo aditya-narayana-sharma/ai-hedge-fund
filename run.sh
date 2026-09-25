@@ -14,12 +14,15 @@ show_help() {
   echo "  --margin-requirement RATIO  Margin requirement ratio (default: 0.0)"
   echo "  --ollama            Use Ollama for local LLM inference"
   echo "  --show-reasoning    Show reasoning from each agent"
+  echo "  --analysts LIST     Comma-separated analysts (e.g., warren_buffett,michael_burry)"
+  echo "  --analysts-all      Use every available analyst (overrides --analysts)"
   echo ""
   echo "Commands:"
   echo "  main                Run the main hedge fund application"
   echo "  backtest            Run the backtester"
   echo "  build               Build the Docker image"
   echo "  compose             Run using Docker Compose with integrated Ollama"
+  echo "  web                 Run the backend API and the canvas (http://localhost:5173)"
   echo "  ollama              Start only the Ollama container for model management"
   echo "  pull MODEL          Pull a specific model into the Ollama container"
   echo "  help                Show this help message"
@@ -42,6 +45,9 @@ END_DATE=""
 INITIAL_AMOUNT="100000.0"
 MARGIN_REQUIREMENT="0.0"
 SHOW_REASONING=""
+# Default to every analyst so the containerised run never blocks on the
+# interactive picker. Override with --analysts or --analysts-all.
+ANALYSTS="--analysts-all"
 COMMAND=""
 MODEL_NAME=""
 
@@ -76,7 +82,15 @@ while [[ $# -gt 0 ]]; do
       SHOW_REASONING="--show-reasoning"
       shift
       ;;
-    main|backtest|build|help|compose|ollama)
+    --analysts)
+      ANALYSTS="--analysts $2"
+      shift 2
+      ;;
+    --analysts-all)
+      ANALYSTS="--analysts-all"
+      shift
+      ;;
+    main|backtest|build|help|compose|ollama|web)
       COMMAND="$1"
       shift
       ;;
@@ -218,16 +232,37 @@ if [ "$COMMAND" = "compose" ]; then
   exit 0
 fi
 
-# Check if .env file exists, if not create from .env.example
+# Check if .env file exists, if not create it.
+# Prefer .env.example as the template, but never hard-fail on its absence:
+# the run scripts must not depend on a template file being present.
 if [ ! -f .env ]; then
   if [ -f .env.example ]; then
     echo "No .env file found. Creating from .env.example..."
     cp .env.example .env
-    echo "Please edit .env file to add your API keys."
   else
-    echo "Error: No .env or .env.example file found."
-    exit 1
+    echo "No .env or .env.example file found. Creating an empty .env..."
+    cat > .env <<'ENVEOF'
+# Set at least one LLM provider key below, then re-run this command.
+ANTHROPIC_API_KEY=
+DEEPSEEK_API_KEY=
+GROQ_API_KEY=
+GOOGLE_API_KEY=
+OPENAI_API_KEY=
+# Optional: free for AAPL, GOOGL, MSFT, NVDA, TSLA without a key.
+FINANCIAL_DATASETS_API_KEY=
+ENVEOF
   fi
+  echo "Please edit .env and add your API keys (at least one LLM provider), then re-run."
+fi
+
+# Run only the web application (backend API + canvas)
+if [ "$COMMAND" = "web" ]; then
+  echo "Starting the backend API and the canvas..."
+  echo "  Canvas:  http://localhost:5173"
+  echo "  API:     http://localhost:8000"
+  echo "  Docs:    http://localhost:8000/docs"
+  $COMPOSE_CMD $GPU_CONFIG up --build backend frontend
+  exit 0
 fi
 
 # Set script path and parameters based on command
@@ -288,6 +323,10 @@ if [ -n "$USE_OLLAMA" ]; then
   if [ -n "$MARGIN_REQUIREMENT" ]; then
     COMMAND_OVERRIDE="$COMMAND_OVERRIDE --margin-requirement $MARGIN_REQUIREMENT"
   fi
+
+  if [ -n "$ANALYSTS" ]; then
+    COMMAND_OVERRIDE="$COMMAND_OVERRIDE $ANALYSTS"
+  fi
   
   # Run the command with Docker Compose
   echo "Running AI Hedge Fund with Ollama using Docker Compose..."
@@ -311,7 +350,7 @@ fi
 CMD="docker run -it --rm -v $(pwd)/.env:/app/.env"
 
 # Add the command
-CMD="$CMD ai-hedge-fund python $SCRIPT_PATH --ticker $TICKER $START_DATE $END_DATE $INITIAL_PARAM --margin-requirement $MARGIN_REQUIREMENT $SHOW_REASONING"
+CMD="$CMD ai-hedge-fund python $SCRIPT_PATH --ticker $TICKER $START_DATE $END_DATE $INITIAL_PARAM --margin-requirement $MARGIN_REQUIREMENT $SHOW_REASONING $ANALYSTS"
 
 # Run the command
 echo "Running: $CMD"

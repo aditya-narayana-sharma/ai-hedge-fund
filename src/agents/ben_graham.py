@@ -1,13 +1,15 @@
+import json
+import math
+
+from langchain_core.messages import HumanMessage
+from langchain_core.prompts import ChatPromptTemplate
+from pydantic import BaseModel
+from typing_extensions import Literal
+
 from src.graph.state import AgentState, show_agent_reasoning
 from src.tools.api import get_financial_metrics, get_market_cap, search_line_items
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.messages import HumanMessage
-from pydantic import BaseModel
-import json
-from typing_extensions import Literal
-from src.utils.progress import progress
 from src.utils.llm import call_llm
-import math
+from src.utils.progress import progress
 
 
 class BenGrahamSignal(BaseModel):
@@ -36,7 +38,24 @@ def ben_graham_agent(state: AgentState):
         metrics = get_financial_metrics(ticker, end_date, period="annual", limit=10)
 
         progress.update_status("ben_graham_agent", ticker, "Gathering financial line items")
-        financial_line_items = search_line_items(ticker, ["earnings_per_share", "revenue", "net_income", "book_value_per_share", "total_assets", "total_liabilities", "current_assets", "current_liabilities", "dividends_and_other_cash_distributions", "outstanding_shares"], end_date, period="annual", limit=10)
+        financial_line_items = search_line_items(
+            ticker,
+            [
+                "earnings_per_share",
+                "revenue",
+                "net_income",
+                "book_value_per_share",
+                "total_assets",
+                "total_liabilities",
+                "current_assets",
+                "current_liabilities",
+                "dividends_and_other_cash_distributions",
+                "outstanding_shares",
+            ],
+            end_date,
+            period="annual",
+            limit=10,
+        )
 
         progress.update_status("ben_graham_agent", ticker, "Getting market cap")
         market_cap = get_market_cap(ticker, end_date)
@@ -63,7 +82,14 @@ def ben_graham_agent(state: AgentState):
         else:
             signal = "neutral"
 
-        analysis_data[ticker] = {"signal": signal, "score": total_score, "max_score": max_possible_score, "earnings_analysis": earnings_analysis, "strength_analysis": strength_analysis, "valuation_analysis": valuation_analysis}
+        analysis_data[ticker] = {
+            "signal": signal,
+            "score": total_score,
+            "max_score": max_possible_score,
+            "earnings_analysis": earnings_analysis,
+            "strength_analysis": strength_analysis,
+            "valuation_analysis": valuation_analysis,
+        }
 
         progress.update_status("ben_graham_agent", ticker, "Generating Ben Graham analysis")
         graham_output = generate_graham_output(
@@ -299,7 +325,7 @@ def generate_graham_output(
             3. Prefer stable earnings over multiple years.
             4. Consider dividend record for extra safety.
             5. Avoid speculative or high-growth assumptions; focus on proven metrics.
-            
+
             When providing your reasoning, be thorough and specific by:
             1. Explaining the key valuation metrics that influenced your decision the most (Graham Number, NCAV, P/E, etc.)
             2. Highlighting the specific financial strength indicators (current ratio, debt levels, etc.)
@@ -307,10 +333,10 @@ def generate_graham_output(
             4. Providing quantitative evidence with precise numbers
             5. Comparing current metrics to Graham's specific thresholds (e.g., "Current ratio of 2.5 exceeds Graham's minimum of 2.0")
             6. Using Benjamin Graham's conservative, analytical voice and style in your explanation
-            
+
             For example, if bullish: "The stock trades at a 35% discount to net current asset value, providing an ample margin of safety. The current ratio of 2.5 and debt-to-equity of 0.3 indicate strong financial position..."
             For example, if bearish: "Despite consistent earnings, the current price of $50 exceeds our calculated Graham Number of $35, offering no margin of safety. Additionally, the current ratio of only 1.2 falls below Graham's preferred 2.0 threshold..."
-                        
+
             Return a rational recommendation: bullish, bearish, or neutral, with a confidence level (0-100) and thorough reasoning.
             """,
             ),

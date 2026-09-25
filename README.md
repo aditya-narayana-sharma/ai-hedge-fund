@@ -47,7 +47,12 @@ By using this software, you agree to use it solely for learning purposes.
 - [Usage](#usage)
   - [Running the Hedge Fund](#running-the-hedge-fund)
   - [Running the Backtester](#running-the-backtester)
+  - [Running the Web Application](#running-the-web-application)
+  - [Selecting Analysts](#selecting-analysts)
+- [Configuration](#configuration)
+- [Development](#development)
 - [Project Structure](#project-structure)
+- [Architecture](#architecture)
 - [Contributing](#contributing)
 - [Feature Requests](#feature-requests)
 - [License](#license)
@@ -231,6 +236,92 @@ poetry run python src/backtester.py --ticker AAPL,MSFT,NVDA --ollama
 run.bat --ticker AAPL,MSFT,NVDA --ollama backtest
 ```
 
+The equity-curve chart opens in a window when there is a display, and is
+written to a file when there is not (Docker, CI, a plain SSH session). Name the
+file explicitly with `--chart-output path/to/chart.png`.
+
+### Running the Web Application
+
+A React Flow canvas for composing the agent graph and watching each node run,
+backed by a FastAPI server.
+
+```bash
+# With Docker (backend + canvas together):
+./run.sh web          # Linux/Mac
+run.bat web           # Windows
+
+# Or run the two halves directly, from the REPOSITORY ROOT:
+poetry run uvicorn app.backend.main:app --reload
+cd app/frontend && npm install && npm run dev
+```
+
+- Canvas: http://localhost:5173
+- API: http://localhost:8000
+- API docs: http://localhost:8000/docs
+
+The backend exposes `GET /agents`, `GET /models`, `POST /hedge-fund/run` and
+`POST /backtest`. The last two stream Server-Sent Events, so the canvas lights
+up agent by agent as the run proceeds; the backtest returns an equity curve,
+drawdown and exposure charts.
+
+### Selecting Analysts
+
+Both entry points take the same flags. With neither, an interactive picker
+appears:
+
+```bash
+# Every analyst, non-interactive (what Docker uses by default)
+poetry run python src/main.py --ticker AAPL,MSFT,NVDA --analysts-all
+
+# A specific subset
+poetry run python src/main.py --ticker AAPL,MSFT,NVDA --analysts warren_buffett,michael_burry
+
+# Same flags on the backtester and through the run scripts
+./run.sh --ticker AAPL,MSFT,NVDA --analysts warren_buffett main
+```
+
+## Configuration
+
+Every variable is documented in [`.env.example`](.env.example). At least one
+LLM provider key is required.
+
+| Variable | Purpose |
+|---|---|
+| `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GROQ_API_KEY`, `DEEPSEEK_API_KEY`, `GOOGLE_API_KEY` | LLM providers. Set at least one. |
+| `FINANCIAL_DATASETS_API_KEY` | Market data. Optional — AAPL, GOOGL, MSFT, NVDA and TSLA are free without it. |
+| `OPENAI_API_BASE` | Point the OpenAI client at a compatible gateway (Azure, LiteLLM, OpenRouter, vLLM). |
+| `OLLAMA_HOST`, `OLLAMA_BASE_URL` | Reach an Ollama server that is not on localhost. `OLLAMA_BASE_URL` also selects the remote code path. |
+| `VITE_API_URL` | Backend URL the canvas calls. Defaults to `http://localhost:8000`. See [`app/frontend/.env.example`](app/frontend/.env.example). |
+| `AI_HEDGE_FUND_CORS_ORIGINS` | Comma-separated browser origins the API accepts. Defaults to the two Vite dev servers. |
+| `AI_HEDGE_FUND_API_KEY` | When set, the run endpoints require a matching `X-API-Key` header. Unset means open. |
+| `AI_HEDGE_FUND_RATE_LIMIT`, `AI_HEDGE_FUND_RATE_LIMIT_WINDOW` | Requests allowed per client per window. Unset or `0` disables rate limiting. |
+| `AI_HEDGE_FUND_DATABASE_URL` | When set, run history is persisted. Unset means no database is opened. |
+| `AI_HEDGE_FUND_CACHE_TTL`, `AI_HEDGE_FUND_CACHE_DIR` | Optional expiry and on-disk persistence for the market-data cache. |
+
+Runtime flags shared by both CLI entry points: `--tickers`, `--start-date`,
+`--end-date`, `--initial-cash` / `--initial-capital`, `--margin-requirement`,
+`--position-limit`, `--analysts` / `--analysts-all`, `--show-reasoning`,
+`--ollama`.
+
+## Development
+
+```bash
+poetry install
+
+poetry run pytest                     # tests
+poetry run flake8 src app tests       # lint
+poetry run black --check src app tests
+poetry run isort --check-only src app tests
+poetry run mypy                       # types
+
+cd app/frontend
+npm ci && npm run lint && npm run build
+```
+
+CI runs exactly this on `ubuntu-latest` for every pull request
+(`.github/workflows/ci.yml`). The Linux runner is deliberate: it is
+case-sensitive, which is what stops filename-casing import bugs from reaching
+`main`.
 
 ## Project Structure 
 ```
@@ -249,13 +340,37 @@ ai-hedge-fund/
 │   │   ├── aswath_damodaran.py   # Aswath Damodaran agent
 │   │   ├── ...                   # Other agents
 │   │   ├── ...                   # Other agents
+│   ├── data/                     # Cache, response models, portfolio model
+│   │   ├── cache.py              # Coverage-tracking API cache
+│   │   ├── portfolio.py          # Portfolio shape + net liquidation value
+│   ├── graph/                    # LangGraph state and reducers
+│   ├── llm/                      # Provider clients and model catalogs
 │   ├── tools/                    # Agent tools
-│   │   ├── api.py                # API tools
+│   │   ├── api.py                # financialdatasets.ai client
+│   ├── utils/                    # Progress, run context, charts, parsing
 │   ├── backtester.py             # Backtesting tools
-│   ├── main.py # Main entry point
+│   ├── main.py                   # Main entry point
+├── app/
+│   ├── backend/                  # FastAPI server
+│   │   ├── api/                  # Router composition, auth, rate limiting
+│   │   ├── database/             # Optional run-history persistence
+│   │   ├── models/               # Request, response and SSE event schemas
+│   │   ├── routes/               # Endpoint implementations
+│   │   ├── services/             # Graph construction, streaming, backtest
+│   ├── frontend/                 # React Flow canvas
+├── migrations/                   # Alembic migrations
+├── tests/                        # pytest suite
+├── Plans/                        # Requirement documents for planned work
+├── ARCHITECTURE.md               # Data flow across all three tiers
 ├── pyproject.toml
 ├── ...
 ```
+
+## Architecture
+
+[`ARCHITECTURE.md`](ARCHITECTURE.md) covers the data flow across all three
+tiers — CLI and HTTP entry points, the LangGraph fan-out, caching, run
+isolation, and the SSE contract between the backend and the canvas.
 
 ## Contributing
 
