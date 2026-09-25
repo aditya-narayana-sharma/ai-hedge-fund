@@ -12,11 +12,7 @@ from statistics import median
 from langchain_core.messages import HumanMessage
 
 from src.graph.state import AgentState, show_agent_reasoning
-from src.tools.api import (
-    get_financial_metrics,
-    get_market_cap,
-    search_line_items,
-)
+from src.tools.api import get_financial_metrics, get_market_cap, search_line_items
 from src.utils.progress import progress
 
 

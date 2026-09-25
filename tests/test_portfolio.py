@@ -7,12 +7,7 @@ net liquidation value was understated by exactly ``margin_used``.
 
 import pytest
 
-from src.data.portfolio import (
-    create_portfolio,
-    DEFAULT_POSITION_LIMIT,
-    net_liquidation_value,
-    Portfolio,
-)
+from src.data.portfolio import create_portfolio, DEFAULT_POSITION_LIMIT, net_liquidation_value, Portfolio
 
 
 def test_create_portfolio_zeroes_every_ticker():

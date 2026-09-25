@@ -12,13 +12,7 @@ from typing_extensions import Callable
 from src.data.portfolio import create_portfolio, DEFAULT_POSITION_LIMIT, net_liquidation_value
 from src.llm.models import get_model_info, LLM_ORDER, ModelProvider, OLLAMA_LLM_ORDER
 from src.main import run_hedge_fund
-from src.tools.api import (
-    get_company_news,
-    get_financial_metrics,
-    get_insider_trades,
-    get_price_data,
-    get_prices,
-)
+from src.tools.api import get_company_news, get_financial_metrics, get_insider_trades, get_price_data, get_prices
 from src.utils.analysts import ANALYST_ORDER
 from src.utils.charts import plt, render_figure
 from src.utils.display import format_backtest_row, print_backtest_results
